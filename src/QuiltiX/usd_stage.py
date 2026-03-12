@@ -71,14 +71,17 @@ class MxStageController(QtCore.QObject):
         stage=None,
     ):
         super(MxStageController, self).__init__()
-        self.added_layers = []
         self.editor = editor
-        self.applied_material = None
+        self._material_layers = {}   # name -> Sdf.Layer
+        self._active_material = None
 
     def set_stage(self, stage):
         self.stage = stage
         self.stage_root = self.stage.GetRootLayer()
         self.stage.SetEditTarget(Usd.EditTarget(self.stage.GetSessionLayer()))
+
+        self._material_layers = {}
+        self._active_material = None
 
         in_memory = os.getenv("QUILTIX_WRITE_TMP_TO_DISK", "0") == "0"
         if in_memory:
@@ -95,64 +98,79 @@ class MxStageController(QtCore.QObject):
     def get_all_geo_prims(self):
         return Utils._GetAllPrimsOfType(self.stage, Tf.Type.Find(UsdGeom.Gprim))
 
+    def add_material_layer(self, name):
+        """Create an isolated Sdf.Layer for a named material and insert it into the stage."""
+        in_memory = os.getenv("QUILTIX_WRITE_TMP_TO_DISK", "0") == "0"
+        if in_memory:
+            layer = Sdf.Layer.CreateAnonymous(f"_tmp_quiltix_mat_{name}.mtlx")
+        else:
+            idf = os.path.join(os.environ["TEMP"], f"_tmp_quiltix_mat_{name}.mtlx")
+            layer = Sdf.Layer.CreateNew(idf)
+
+        self._material_layers[name] = layer
+        # Insert after assignments layer so geometry layers stay at the bottom
+        self.stage_root.subLayerPaths.insert(1, layer.identifier)
+        return layer
+
+    def remove_material_layer(self, name):
+        """Remove a material's layer from the stage."""
+        if name not in self._material_layers:
+            return
+        layer = self._material_layers.pop(name)
+        if layer.identifier in self.stage_root.subLayerPaths:
+            self.stage_root.subLayerPaths.remove(layer.identifier)
+        if self._active_material == name:
+            self._active_material = next(iter(self._material_layers), None)
+        self.signal_stage_updated.emit()
+
+    def set_active_material(self, name):
+        """Set which material is currently being authored in the node graph."""
+        self._active_material = name
+
+    def get_active_material(self):
+        return self._active_material
+
     def apply_first_material_to_all_prims(self):
-        mx_data = self.editor.qx_node_graph.get_mx_xml_data_from_graph()
+        if not self._active_material:
+            return
+        prims = self.get_all_geo_prims()
+        if prims:
+            self.apply_material_to_prims(self._active_material, prims)
+
+    def refresh_mx_file(self, mx_data, emit=True):
         if not mx_data:
             return
 
-        tmp_mx_doc = mx.createDocument()
-        mx.readFromXmlString(tmp_mx_doc, mx_data)
-        if mx_doc_materials := tmp_mx_doc.getMaterials():
-            first_mx_material_name = mx_doc_materials[0].getName()
-        else:
-            # TODO: error out
-            return
+        # Determine target material — infer from XML if no active material yet (backward compat)
+        material_name = self._active_material
+        if not material_name:
+            tmp_doc = mx.createDocument()
+            try:
+                mx.readFromXmlString(tmp_doc, mx_data)
+            except Exception:
+                return
+            materials = tmp_doc.getMaterials()
+            if not materials:
+                return
+            material_name = materials[0].getName()
+            self._active_material = material_name
 
-        prims = self.get_all_geo_prims()
-        self.apply_material_to_prims(first_mx_material_name, prims)
-
-    def refresh_mx_file(self, mx_data, emit=True):
-        for layer in self.added_layers:
-            self.stage_root.subLayerPaths.remove(layer)
-            self.added_layers.remove(layer)
+        # Create the layer for this material if it doesn't exist yet
+        if material_name not in self._material_layers:
+            self.add_material_layer(material_name)
 
         self.stage.GetSessionLayer().Clear()
-
-        in_memory = os.getenv("QUILTIX_WRITE_TMP_TO_DISK", "0") == "0"
-        if in_memory:
-            idf = "_tmp_quiltix_graph.mtlx"
-            layer = Sdf.Layer.CreateAnonymous(idf)
-            cur_path = self.editor.current_filepath
-            if cur_path and cur_path != "untitled":
-                # allows relative filepaths
-                idf = os.path.join(os.path.dirname(cur_path), "_tmp_quiltix_graph.mtlx")
-                layer.identifier = idf
-
-            idf = layer.identifier
-            layer.ImportFromString(mx_data)
-        else:
-            tmp_mtlx_export_location = os.path.join(os.environ["TEMP"], "_tmp_quiltix_graph.mtlx")
-            with open(tmp_mtlx_export_location, "w") as f:
-                f.write(mx_data)
-
-            idf = tmp_mtlx_export_location
-
-        self.stage_root.subLayerPaths.insert(0, idf)
-        self.added_layers.append(idf)
+        self._material_layers[material_name].ImportFromString(mx_data)
 
         if emit:
-            # TODO: remove -- DEBUG purpose
-            # tmp_usd_stage_export_location = os.path.join(os.environ["TEMP"], "matxeditor_tmp.usda")
-            # self.stage_root.Export(tmp_usd_stage_export_location)
-            # logger.debug(f"Refreshed mtlx: {tmp_usd_stage_export_location}")
             self.signal_stage_updated.emit()
 
     def update_parameter(self, qx_node, property_name, property_value):
         property_name = QxNode.get_mx_input_name_from_property_name(qx_node, property_name)
 
-        if not self.applied_material:
+        if not self._active_material:
             return
-        
+
         if qx_node.type_ == "Other.QxGroupNode":
             ng_name = qx_node.name()
             sub_graph = qx_node.get_sub_graph()
@@ -169,9 +187,8 @@ class MxStageController(QtCore.QObject):
             property_name = cports[0].name()
             prim = self.stage.GetPrimAtPath(mx_stage_path)
         elif qx_node.current_mx_def.getNodeGroup() in ["material", "pbr", "shader"]:
-            mat_prim = self.stage.GetPrimAtPath("/MaterialX/Materials")
-            prim = mat_prim.GetChildren()[0]
-            mx_stage_path = prim.GetPath().pathString
+            mx_stage_path = f"/MaterialX/Materials/{self._active_material}"
+            prim = self.stage.GetPrimAtPath(mx_stage_path)
         else:
             if qx_node.graph.is_root:
                 ng_name = "NG_main"
@@ -218,13 +235,13 @@ class MxStageController(QtCore.QObject):
             prim.ApplyAPI(UsdShade.MaterialBindingAPI)
             UsdShade.MaterialBindingAPI(prim).UnbindAllBindings()
             UsdShade.MaterialBindingAPI(prim).Bind(material)
-            self.applied_material = mx_material_stage_path
             logger.info("applied material %s to %s" % (mx_material_stage_path, prim.GetPath()))
 
         self.stage.SetEditTarget(prev_target)
         self.signal_stage_updated.emit()
 
     def about_to_close(self):
-        for layer in self.added_layers:
-            self.stage_root.subLayerPaths.remove(layer)
-            self.added_layers.remove(layer)
+        for layer in self._material_layers.values():
+            if layer.identifier in self.stage_root.subLayerPaths:
+                self.stage_root.subLayerPaths.remove(layer.identifier)
+        self._material_layers.clear()

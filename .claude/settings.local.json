@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv --version)",
+      "Bash(.venv/Scripts/python.exe --version)",
+      "Bash(.venv/Scripts/pip show:*)",
+      "Bash(.venv/Scripts/python.exe -c \"import pies2overrides; print\\(''installed''\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import configparser; print\\(''configparser ok''\\)\")",
+      "Bash(python -c \"import configparser; print\\(''ok''\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.version\\); print\\(sys.prefix\\)\")",
+      "Bash(python -c \"import sys; print\\([p for p in sys.path]\\)\")",
+      "Bash(powershell -command \"& { $bytes = [System.IO.File]::ReadAllBytes\\(''.venv/Lib/site-packages/pxr/Tf/_tf.pyd''\\); $text = [System.Text.Encoding]::ASCII.GetString\\($bytes\\); [regex]::Matches\\($text, ''python[0-9]+[a-z]*.dll''\\) | ForEach-Object { $_.Value } | Sort-Object -Unique }\")",
+      "Bash(powershell -command \"Select-String -Path ''.venv/Lib/site-packages/pxr/Tf/_tf.pyd'' -Pattern ''python3\\\\d+\\\\.dll'' -Encoding Byte | Select-Object -First 5\")",
+      "Bash(powershell -command \"Select-String -Path ''.venv/Lib/site-packages/pxr/Tf/_tf.pyd'' -Pattern ''python3'' -Encoding ascii | Select-Object -First 5\")",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(find .venv/Lib/site-packages/pxr -name *.dll)",
+      "Bash(head -5 find .venv/Lib/site-packages -maxdepth 2 -name *.dll)",
+      "Bash(find .venv -name *.dll)",
+      "Bash(find .venv/Lib/site-packages/pxr -name usd_*.dll -o -name usd_*.pyd)",
+      "Bash(head -20 find .venv/Lib/site-packages/pxr -name usd_tf*)"
+    ]
+  }
+}

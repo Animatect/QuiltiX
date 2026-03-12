@@ -56,6 +56,8 @@ class PrimItemWidget(QtWidgets.QTreeWidgetItem):
 
 
 class UsdStageTreeWidget(QtWidgets.QTreeWidget):
+    assign_material_to_selected = QtCore.Signal(str)
+
     def __init__(self, stage=None, parent=None):
         super(UsdStageTreeWidget, self).__init__(parent=parent)
         # TODO: cleanup settings
@@ -79,6 +81,9 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         self.setUniformRowHeights(True)
         self.setColumnWidth(1, 10)
         self._prim_to_item_map = {}
+        self.get_materials_func = None
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self.set_stage(stage)
 
     def set_stage(self, stage):
@@ -136,6 +141,23 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         for i in range(item.childCount()):
             child_item = item.child(i)
             self.toggle_hierarchy_visibility(child_item, set_visibility_to)
+
+    def _show_context_menu(self, pos):
+        selected_prims = self.get_selected_prims()
+        if not selected_prims or self.get_materials_func is None:
+            return
+
+        materials = self.get_materials_func()
+        if not materials:
+            return
+
+        menu = QtWidgets.QMenu(self)
+        assign_menu = menu.addMenu("Assign Material")
+        for mat_name in materials:
+            action = assign_menu.addAction(mat_name)
+            action.triggered.connect(lambda checked=False, name=mat_name: self.assign_material_to_selected.emit(name))
+
+        menu.exec_(self.viewport().mapToGlobal(pos))
 
     def get_selected_prims(self):
         items = self.selectedItems()

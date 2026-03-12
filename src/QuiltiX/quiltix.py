@@ -46,7 +46,7 @@ from qtpy.QtWidgets import (  # type: ignore
     QVBoxLayout,
 )
 
-from QuiltiX import mx_node, qx_node, usd_render_settings, usd_stage, usd_stage_tree, usd_stage_view
+from QuiltiX import material_manager, mx_node, qx_node, usd_render_settings, usd_stage, usd_stage_tree, usd_stage_view
 from QuiltiX.constants import ROOT
 from QuiltiX.qx_node_property import PropertiesBinWidget
 from QuiltiX.qx_nodegraph import QxNodeGraph
@@ -66,6 +66,8 @@ class QuiltiXWindow(QMainWindow):
         plugin_manager.hook.before_ui_init(editor=self)
 
         self.stage_ctrl = usd_stage.MxStageController(self)
+        self._material_xml_cache = {}   # material_name -> mx xml string
+        self._switching_material = False
 
         quiltix_logo_path = os.path.join(ROOT, "resources", "icons", "quiltix-logo-x.png")
         quiltix_icon = QtGui.QIcon(QtGui.QPixmap(quiltix_logo_path))
@@ -169,6 +171,8 @@ class QuiltiXWindow(QMainWindow):
 
         # region Stage Tree
         self.stage_tree_widget = self.get_stage_tree_widget()
+        self.stage_tree_widget.get_materials_func = self._get_material_node_names
+        self.stage_tree_widget.assign_material_to_selected.connect(self._on_assign_material_to_selected)
         self.stage_tree_dock_widget = QDockWidget()
         self.stage_tree_dock_widget.setWindowTitle("Scenegraph")
         self.stage_tree_dock_widget.setWidget(self.stage_tree_widget)
@@ -208,6 +212,16 @@ class QuiltiXWindow(QMainWindow):
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.properties_dock_widget)
         # endregion Properties
 
+        # region Material Manager
+        self.material_manager_widget = material_manager.MaterialManagerWidget()
+        self.material_manager_dock_widget = QDockWidget()
+        self.material_manager_dock_widget.setWindowTitle("Materials")
+        self.material_manager_dock_widget.setWidget(self.material_manager_widget)
+        self.material_manager_dock_widget.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.material_manager_dock_widget)
+        self.splitDockWidget(self.properties_dock_widget, self.material_manager_dock_widget, QtCore.Qt.Vertical)
+        # endregion Material Manager
+
         # region Events
         self.qx_node_graph.node_graph_changed.connect(self.on_node_graph_changed)
         self.qx_node_graph.mx_data_updated.connect(self.stage_ctrl.refresh_mx_file)
@@ -222,14 +236,38 @@ class QuiltiXWindow(QMainWindow):
 
         self.stage_ctrl.signal_stage_changed.connect(self.stage_tree_widget.set_stage)
         self.stage_ctrl.signal_stage_updated.connect(self.stage_tree_widget.refresh_tree)
+
+        self.material_manager_widget.material_added.connect(self._on_material_added)
+        self.material_manager_widget.material_activated.connect(self._on_material_activated)
+        self.material_manager_widget.material_removed.connect(self._on_material_removed)
         # endregion Events
 
         self.setCentralWidget(self.qx_node_graph_widget)
         self.qx_node_graph_widget.setFocus()
 
     def on_mx_file_loaded(self, path):
+        if self._switching_material:
+            return
         self.set_current_filepath(path)
         graph_data = self.qx_node_graph.get_mx_xml_data_from_graph()
+
+        # Sync material manager with the loaded material name
+        if graph_data:
+            tmp_doc = mx.createDocument()
+            try:
+                mx.readFromXmlString(tmp_doc, graph_data)
+            except Exception:
+                pass
+            else:
+                materials = tmp_doc.getMaterials()
+                if materials:
+                    mat_name = materials[0].getName()
+                    if mat_name not in self.stage_ctrl._material_layers:
+                        self.stage_ctrl.add_material_layer(mat_name)
+                    self.stage_ctrl.set_active_material(mat_name)
+                    self._material_xml_cache[mat_name] = graph_data
+                    self.material_manager_widget.add_material(mat_name, set_active=True)
+
         self.stage_ctrl.refresh_mx_file(graph_data, emit=False)
         if self.act_apply_mat.isChecked():
             self.stage_ctrl.apply_first_material_to_all_prims()
@@ -239,6 +277,34 @@ class QuiltiXWindow(QMainWindow):
     def on_node_graph_changed(self, nodegraph):
         if self.act_apply_mat.isChecked():
             self.stage_ctrl.apply_first_material_to_all_prims()
+
+    def _on_material_added(self, name):
+        """Called when the user clicks '+ New' — create the USD layer before activation fires."""
+        self.stage_ctrl.add_material_layer(name)
+        self._material_xml_cache[name] = ""
+
+    def _on_material_activated(self, name):
+        """Swap the node graph to show the selected material."""
+        # Save current graph state
+        old = self.stage_ctrl.get_active_material()
+        if old:
+            self._material_xml_cache[old] = self.qx_node_graph.get_mx_xml_data_from_graph()
+
+        self.stage_ctrl.set_active_material(name)
+
+        xml = self._material_xml_cache.get(name)
+        self._switching_material = True
+        if xml:
+            self.qx_node_graph.load_graph_from_mx_data(xml)
+        else:
+            self.qx_node_graph.clear_session()
+        self._switching_material = False
+
+    def _on_material_removed(self, name):
+        """Remove material layer and clear its cached XML."""
+        self._material_xml_cache.pop(name, None)
+        self.stage_ctrl.remove_material_layer(name)
+        # If another material becomes active via list selection, _on_material_activated handles it
 
     def get_stage_tree_widget(self):
         return usd_stage_tree.UsdStageTreeWidget()
@@ -288,6 +354,24 @@ class QuiltiXWindow(QMainWindow):
                 return
 
         self.stage_ctrl.apply_material_to_prims(material_name, prims)
+
+    def _get_material_node_names(self):
+        # Query the stage directly — this gives the actual prim names that apply_material_to_prims uses
+        if hasattr(self.stage_ctrl, "stage"):
+            mat_root = self.stage_ctrl.stage.GetPrimAtPath("/MaterialX/Materials")
+            if mat_root.IsValid():
+                names = [child.GetName() for child in mat_root.GetChildren()]
+                if names:
+                    return names
+        # Fallback: read from the current graph
+        nodes = self.qx_node_graph.get_nodes_by_type("Material.Surfacematerial")
+        nodes += self.qx_node_graph.get_nodes_by_type("Material.Volumematerial")
+        return [node.NODE_NAME for node in nodes]
+
+    def _on_assign_material_to_selected(self, material_name):
+        prims = self.stage_tree_widget.get_selected_prims()
+        if prims:
+            self.stage_ctrl.apply_material_to_prims(material_name, prims)
 
     def expand_selected_nodegraph(self):
         action = self.expand_cmd.qaction

@@ -67,6 +67,10 @@ quiltix = "QuiltiX:quiltix"
 requires = ["setuptools>=61.0.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv.extra-build-dependencies]
+openusd-build = ["pies2overrides"]
+quiltix = ["pies2overrides"]
+
 [tool.pytest.ini_options]
 addopts = "--cov=QuiltiX"
 testpaths = [
