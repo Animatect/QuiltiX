@@ -30,7 +30,9 @@
       "Bash(find C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr -name *.py -exec grep -l \"fileFormatArgs\\\\|FileFormatArgs\\\\|formatArgs\" {})",
       "Bash(2)",
       "Bash(find C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv -name *.usda -o -name *.plugInfo.json)",
-      "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")"
+      "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")",
+      "Bash(find .venv/Lib/site-packages/pxr/bin -name usdview* -o -name MaterialX* 2)",
+      "Bash(/dev/null find:*)"
     ]
   }
 }
