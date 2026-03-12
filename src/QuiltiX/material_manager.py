@@ -2,10 +2,11 @@ from qtpy import QtCore, QtWidgets  # type: ignore
 
 
 class MaterialManagerWidget(QtWidgets.QWidget):
-    material_activated = QtCore.Signal(str)  # user selected a material to edit
-    material_added = QtCore.Signal(str)      # new material created
-    material_removed = QtCore.Signal(str)    # material deleted
-    looks_scope_changed = QtCore.Signal(str) # user changed the looks scope path
+    material_activated = QtCore.Signal(str)       # user selected a material to edit
+    material_added = QtCore.Signal(str)           # new material created
+    material_removed = QtCore.Signal(str)         # material deleted
+    looks_scope_changed = QtCore.Signal(str)      # user changed the looks scope path
+    material_export_requested = QtCore.Signal(str) # user wants to export a material copy
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,6 +32,8 @@ class MaterialManagerWidget(QtWidgets.QWidget):
 
         self._list = QtWidgets.QListWidget()
         self._list.currentItemChanged.connect(self._on_selection_changed)
+        self._list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._show_list_context_menu)
         layout.addWidget(self._list)
 
         btn_layout = QtWidgets.QHBoxLayout()
@@ -43,6 +46,16 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         layout.addLayout(btn_layout)
 
         self._counter = 1
+
+    def _show_list_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if not item:
+            return
+        menu = QtWidgets.QMenu(self)
+        export_action = menu.addAction("Export copy...")
+        action = menu.exec_(self._list.viewport().mapToGlobal(pos))
+        if action == export_action:
+            self.material_export_requested.emit(item.text())
 
     def _on_scope_changed(self):
         self.looks_scope_changed.emit(self._scope_edit.text().strip())

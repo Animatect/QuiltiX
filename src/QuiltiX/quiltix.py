@@ -1,4 +1,5 @@
 # ruff: noqa: E402 || due to the plugin manager execution
+import json
 import logging
 import os
 import subprocess
@@ -22,7 +23,9 @@ import MaterialX as mx
 
 
 plugin_manager.hook.before_pxr_import()
-from pxr import Usd, UsdShade
+import pathlib
+
+from pxr import Sdf, Usd, UsdShade
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore
 from qtpy.QtWidgets import (  # type: ignore
@@ -241,6 +244,7 @@ class QuiltiXWindow(QMainWindow):
         self.material_manager_widget.material_activated.connect(self._on_material_activated)
         self.material_manager_widget.material_removed.connect(self._on_material_removed)
         self.material_manager_widget.looks_scope_changed.connect(self.stage_ctrl.set_looks_scope)
+        self.material_manager_widget.material_export_requested.connect(self._on_material_export_requested)
         # endregion Events
 
         self.setCentralWidget(self.qx_node_graph_widget)
@@ -323,6 +327,173 @@ class QuiltiXWindow(QMainWindow):
         self._material_xml_cache.pop(name, None)
         self.stage_ctrl.remove_material_layer(name)
         # If another material becomes active via list selection, _on_material_activated handles it
+
+    def _on_material_export_requested(self, name):
+        """Export a single material's .mtlx to a user-chosen location."""
+        xml = self._material_xml_cache.get(name, "")
+        if not xml:
+            QMessageBox.warning(self, "Export Material", f'No data for material "{name}".')
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export {name}", f"{name}.mtlx", "MaterialX files (*.mtlx)"
+        )
+        if not path:
+            return
+        pathlib.Path(path).write_text(xml, encoding="utf-8")
+        logger.info(f"Exported material '{name}' to {path}")
+
+    # -------------------------------------------------------------------------
+    # Session save / load
+    # -------------------------------------------------------------------------
+
+    def save_session_triggered(self):
+        # Snapshot current graph into cache before saving
+        active = self.stage_ctrl.get_active_material()
+        if active:
+            self._material_xml_cache[active] = self.qx_node_graph.get_mx_xml_data_from_graph()
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Session", self.geometry_selection_path or "", "USD files (*.usda)"
+        )
+        if not path:
+            return
+        if not path.endswith(".usda"):
+            path += ".usda"
+        self._save_session(pathlib.Path(path))
+
+    def _save_session(self, save_path):
+        save_path = pathlib.Path(save_path)
+        mtlxlib_dir = save_path.parent / (save_path.stem + "_mtlxlib")
+        mtlxlib_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write each material's XML into the lib folder
+        mtlx_rel_paths = []
+        for name in self.material_manager_widget.get_all_materials():
+            xml = self._material_xml_cache.get(name, "")
+            if not xml:
+                continue
+            mtlx_file = mtlxlib_dir / f"{name}.mtlx"
+            mtlx_file.write_text(xml, encoding="utf-8")
+            rel = str(mtlx_file.relative_to(save_path.parent)).replace("\\", "/")
+            mtlx_rel_paths.append(rel)
+
+        # Build the save layer
+        save_layer = Sdf.Layer.CreateAnonymous(".usda")
+
+        # Sublayers: geometry first so it is at the bottom of the stack
+        sublayers = []
+        if self.geometry_selection_path and os.path.exists(self.geometry_selection_path):
+            rel_geo = os.path.relpath(
+                self.geometry_selection_path, save_path.parent
+            ).replace("\\", "/")
+            sublayers.append(rel_geo)
+        sublayers.extend(mtlx_rel_paths)
+        save_layer.subLayerPaths = sublayers
+
+        # Copy assignment specs (material bindings) inline into the save layer
+        for prim_spec in self.stage_ctrl._assignments_layer.rootPrims:
+            Sdf.CopySpec(
+                self.stage_ctrl._assignments_layer,
+                prim_spec.path,
+                save_layer,
+                prim_spec.path,
+            )
+
+        # Persist session metadata in the layer header
+        # Note: customLayerData only supports string values reliably; lists are JSON-encoded.
+        save_layer.customLayerData = {
+            "quiltiX_activeMaterial": self.stage_ctrl.get_active_material() or "",
+            "quiltiX_looksScope": self.stage_ctrl.get_looks_scope(),
+            "quiltiX_materials": json.dumps(self.material_manager_widget.get_all_materials()),
+        }
+
+        save_layer.Export(str(save_path))
+        logger.info(f"Session saved to {save_path}")
+
+    def load_session_triggered(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Session", self.geometry_selection_path or "", "USD files (*.usda)"
+        )
+        if not path:
+            return
+        self._load_session(pathlib.Path(path))
+
+    def _load_session(self, load_path):
+        load_path = pathlib.Path(load_path)
+        session_layer = Sdf.Layer.FindOrOpen(str(load_path))
+        if not session_layer:
+            QMessageBox.critical(self, "Load Session", f"Could not open:\n{load_path}")
+            return
+
+        metadata = session_layer.customLayerData
+        material_names = json.loads(metadata.get("quiltiX_materials", "[]"))
+        active_material = metadata.get("quiltiX_activeMaterial", "")
+        looks_scope = metadata.get("quiltiX_looksScope", "")
+
+        # Identify geometry sublayer (first non-.mtlx entry)
+        geometry_path = None
+        for sl in session_layer.subLayerPaths:
+            abs_sl = str((load_path.parent / sl).resolve())
+            if not abs_sl.endswith(".mtlx"):
+                geometry_path = abs_sl
+                break
+
+        # Load geometry stage
+        if geometry_path and os.path.exists(geometry_path):
+            self.geometry_selection_path = geometry_path
+            loaded_stage = usd_stage.get_stage_from_file(geometry_path)
+            self.set_stage(loaded_stage)
+
+        # Restore looks scope
+        self.stage_ctrl.set_looks_scope(looks_scope)
+        self.material_manager_widget._scope_edit.setText(looks_scope)
+
+        # Clear current material state
+        self._material_xml_cache = {}
+        self._switching_material = True
+        self.material_manager_widget._list.blockSignals(True)
+        self.material_manager_widget._list.clear()
+        self.material_manager_widget._list.blockSignals(False)
+
+        # Restore each material
+        mtlxlib_dir = load_path.parent / (load_path.stem + "_mtlxlib")
+        for name in material_names:
+            mtlx_file = mtlxlib_dir / f"{name}.mtlx"
+            xml = mtlx_file.read_text(encoding="utf-8") if mtlx_file.exists() else ""
+            self._material_xml_cache[name] = xml
+            self.stage_ctrl.add_material_layer(name)
+            if xml:
+                self.stage_ctrl._material_layers[name].ImportFromString(xml)
+                # Populate _material_mx_names so update_parameter can find the right prim
+                try:
+                    tmp = mx.createDocument()
+                    mx.readFromXmlString(tmp, xml)
+                    mats = tmp.getMaterials()
+                    if mats:
+                        self.stage_ctrl._material_mx_names[name] = mats[0].getName()
+                except Exception:
+                    pass
+            self.material_manager_widget.add_material(name, set_active=False)
+
+        # Restore assignment bindings from the session layer into the assignments layer
+        for prim_spec in session_layer.rootPrims:
+            Sdf.CopySpec(
+                session_layer,
+                prim_spec.path,
+                self.stage_ctrl._assignments_layer,
+                prim_spec.path,
+            )
+
+        self._switching_material = False
+
+        # Activate the previously active material
+        target = active_material if active_material in material_names else (material_names[0] if material_names else None)
+        if target:
+            self._on_material_activated(target)
+            self.material_manager_widget.set_active_material(target)
+
+        self.stage_ctrl.signal_stage_updated.emit()
+        logger.info(f"Session loaded from {load_path}")
 
     def get_stage_tree_widget(self):
         return usd_stage_tree.UsdStageTreeWidget()
@@ -444,6 +615,16 @@ class QuiltiXWindow(QMainWindow):
         load_geo = QAction("Load HDRI...", self)
         load_geo.triggered.connect(self.load_hdri_triggered)
         self.file_menu.addAction(load_geo)
+
+        self.file_menu.addSeparator()
+
+        save_session = QAction("Save Session As...", self)
+        save_session.triggered.connect(self.save_session_triggered)
+        self.file_menu.addAction(save_session)
+
+        load_session = QAction("Load Session...", self)
+        load_session.triggered.connect(self.load_session_triggered)
+        self.file_menu.addAction(load_session)
 
         self.file_menu.addSeparator()
 
