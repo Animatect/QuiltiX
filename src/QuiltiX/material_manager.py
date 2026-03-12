@@ -5,12 +5,29 @@ class MaterialManagerWidget(QtWidgets.QWidget):
     material_activated = QtCore.Signal(str)  # user selected a material to edit
     material_added = QtCore.Signal(str)      # new material created
     material_removed = QtCore.Signal(str)    # material deleted
+    looks_scope_changed = QtCore.Signal(str) # user changed the looks scope path
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
+
+        # Looks scope path
+        scope_layout = QtWidgets.QHBoxLayout()
+        scope_label = QtWidgets.QLabel("Scope:")
+        scope_label.setFixedWidth(42)
+        self._scope_edit = QtWidgets.QLineEdit()
+        self._scope_edit.setPlaceholderText("/MaterialX/Materials  (default)")
+        self._scope_edit.setToolTip(
+            "Optional USD path under which reference material prims are created.\n"
+            "E.g. /World/Looks — materials appear at /World/Looks/{name} in the hierarchy.\n"
+            "Leave empty to bind directly from /MaterialX/Materials/."
+        )
+        self._scope_edit.editingFinished.connect(self._on_scope_changed)
+        scope_layout.addWidget(scope_label)
+        scope_layout.addWidget(self._scope_edit)
+        layout.addLayout(scope_layout)
 
         self._list = QtWidgets.QListWidget()
         self._list.currentItemChanged.connect(self._on_selection_changed)
@@ -26,6 +43,12 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         layout.addLayout(btn_layout)
 
         self._counter = 1
+
+    def _on_scope_changed(self):
+        self.looks_scope_changed.emit(self._scope_edit.text().strip())
+
+    def get_looks_scope(self):
+        return self._scope_edit.text().strip()
 
     def _on_selection_changed(self, current, previous):
         if current:

@@ -19,7 +19,18 @@
       "Bash(head -5 find .venv/Lib/site-packages -maxdepth 2 -name *.dll)",
       "Bash(find .venv -name *.dll)",
       "Bash(find .venv/Lib/site-packages/pxr -name usd_*.dll -o -name usd_*.pyd)",
-      "Bash(head -20 find .venv/Lib/site-packages/pxr -name usd_tf*)"
+      "Bash(head -20 find .venv/Lib/site-packages/pxr -name usd_tf*)",
+      "Bash(python -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(pip show:*)",
+      "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \":*)",
+      "Bash(grep -rl MaterialXRootPath C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr --include=*.py)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"CreateAnonymous\\\\|fileFormat\" C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr --include=*.py)",
+      "Bash(find C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr -name *.py -exec grep -l \"fileFormatArgs\\\\|FileFormatArgs\\\\|formatArgs\" {})",
+      "Bash(2)",
+      "Bash(find C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv -name *.usda -o -name *.plugInfo.json)",
+      "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")"
     ]
   }
 }

@@ -75,6 +75,7 @@ class MxStageController(QtCore.QObject):
         self._material_layers = {}   # manager_name -> Sdf.Layer
         self._active_material = None
         self._material_mx_names = {}  # manager_name -> actual MaterialX element name
+        self._looks_scope = ""        # optional USD path prefix for material reference prims
 
     def set_stage(self, stage):
         self.stage = stage
@@ -131,6 +132,18 @@ class MxStageController(QtCore.QObject):
 
     def get_active_material(self):
         return self._active_material
+
+    def set_looks_scope(self, path):
+        """Set an optional USD scope path under which reference material prims are placed.
+
+        E.g. '/World/Looks' → materials become addressable as /World/Looks/{name}
+        while their definitions stay at /MaterialX/Materials/{name}.
+        Pass an empty string to disable (binds directly from /MaterialX/Materials/).
+        """
+        self._looks_scope = path.strip().rstrip("/")
+
+    def get_looks_scope(self):
+        return self._looks_scope
 
     def apply_first_material_to_all_prims(self):
         if not self._active_material:
@@ -241,14 +254,24 @@ class MxStageController(QtCore.QObject):
             logger.warning("invalid material: " + mx_material_stage_path)
             return
 
-        material = UsdShade.Material.Get(self.stage, mx_material_stage_path)
         prev_target = self.stage.GetEditTarget()
         self.stage.SetEditTarget(Usd.EditTarget(self._assignments_layer))
+
+        # If a looks scope is set, create a reference material prim under that scope
+        # so materials appear at the user-specified path in the hierarchy.
+        if self._looks_scope:
+            bind_path = Sdf.Path(self._looks_scope + "/" + material_name)
+            ref_mat = UsdShade.Material.Define(self.stage, bind_path)
+            ref_mat.GetPrim().GetReferences().AddInternalReference(mx_material_stage_path)
+            material = ref_mat
+        else:
+            material = UsdShade.Material.Get(self.stage, mx_material_stage_path)
+
         for prim in prims:
             prim.ApplyAPI(UsdShade.MaterialBindingAPI)
             UsdShade.MaterialBindingAPI(prim).UnbindAllBindings()
             UsdShade.MaterialBindingAPI(prim).Bind(material)
-            logger.info("applied material %s to %s" % (mx_material_stage_path, prim.GetPath()))
+            logger.info("applied material %s to %s" % (material.GetPath(), prim.GetPath()))
 
         self.stage.SetEditTarget(prev_target)
         self.signal_stage_updated.emit()

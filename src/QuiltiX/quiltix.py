@@ -240,6 +240,7 @@ class QuiltiXWindow(QMainWindow):
         self.material_manager_widget.material_added.connect(self._on_material_added)
         self.material_manager_widget.material_activated.connect(self._on_material_activated)
         self.material_manager_widget.material_removed.connect(self._on_material_removed)
+        self.material_manager_widget.looks_scope_changed.connect(self.stage_ctrl.set_looks_scope)
         # endregion Events
 
         self.setCentralWidget(self.qx_node_graph_widget)
