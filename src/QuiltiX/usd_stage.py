@@ -72,8 +72,9 @@ class MxStageController(QtCore.QObject):
     ):
         super(MxStageController, self).__init__()
         self.editor = editor
-        self._material_layers = {}   # name -> Sdf.Layer
+        self._material_layers = {}   # manager_name -> Sdf.Layer
         self._active_material = None
+        self._material_mx_names = {}  # manager_name -> actual MaterialX element name
 
     def set_stage(self, stage):
         self.stage = stage
@@ -82,6 +83,7 @@ class MxStageController(QtCore.QObject):
 
         self._material_layers = {}
         self._active_material = None
+        self._material_mx_names = {}
 
         in_memory = os.getenv("QUILTIX_WRITE_TMP_TO_DISK", "0") == "0"
         if in_memory:
@@ -162,6 +164,16 @@ class MxStageController(QtCore.QObject):
         self.stage.GetSessionLayer().Clear()
         self._material_layers[material_name].ImportFromString(mx_data)
 
+        # Record the actual MaterialX element name so update_parameter can find the right prim
+        try:
+            tmp = mx.createDocument()
+            mx.readFromXmlString(tmp, mx_data)
+            materials = tmp.getMaterials()
+            if materials:
+                self._material_mx_names[material_name] = materials[0].getName()
+        except Exception:
+            pass
+
         if emit:
             self.signal_stage_updated.emit()
 
@@ -187,7 +199,8 @@ class MxStageController(QtCore.QObject):
             property_name = cports[0].name()
             prim = self.stage.GetPrimAtPath(mx_stage_path)
         elif qx_node.current_mx_def.getNodeGroup() in ["material", "pbr", "shader"]:
-            mx_stage_path = f"/MaterialX/Materials/{self._active_material}"
+            mx_elem_name = self._material_mx_names.get(self._active_material, self._active_material)
+            mx_stage_path = f"/MaterialX/Materials/{mx_elem_name}"
             prim = self.stage.GetPrimAtPath(mx_stage_path)
         else:
             if qx_node.graph.is_root:

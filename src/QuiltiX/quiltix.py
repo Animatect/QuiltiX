@@ -296,9 +296,26 @@ class QuiltiXWindow(QMainWindow):
         self._switching_material = True
         if xml:
             self.qx_node_graph.load_graph_from_mx_data(xml)
+            self._switching_material = False
+            self.stage_ctrl.signal_stage_updated.emit()
         else:
             self.qx_node_graph.clear_session()
+            self._switching_material = False
+            self._create_default_material_nodes(name)
+
+    def _create_default_material_nodes(self, material_name):
+        """Populate a new empty graph with a surfacematerial + standard_surface."""
+        doc = mx.createDocument()
+        ss_node = doc.addNode("standard_surface", f"SS_{material_name}", "surfaceshader")
+        mat_node = doc.addNode("surfacematerial", material_name, "material")
+        mat_input = mat_node.addInput("surfaceshader", "surfaceshader")
+        mat_input.setNodeName(ss_node.getName())
+        xml = mx.writeToXmlString(doc)
+        self._material_xml_cache[material_name] = xml
+        self._switching_material = True
+        self.qx_node_graph.load_graph_from_mx_data(xml)
         self._switching_material = False
+        self.stage_ctrl.refresh_mx_file(xml)
 
     def _on_material_removed(self, name):
         """Remove material layer and clear its cached XML."""
