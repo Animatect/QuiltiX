@@ -32,7 +32,8 @@
       "Bash(find C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv -name *.usda -o -name *.plugInfo.json)",
       "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")",
       "Bash(find .venv/Lib/site-packages/pxr/bin -name usdview* -o -name MaterialX* 2)",
-      "Bash(/dev/null find:*)"
+      "Bash(/dev/null find:*)",
+      "Bash(grep -r \"includedPurposes\\\\|showProxy\\\\|showRender\\\\|showGuides\\\\|ShowProxy\\\\|ShowRender\" C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr/Usdviewq --include=*.py)"
     ]
   }
 }

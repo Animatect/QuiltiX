@@ -3,7 +3,15 @@ import sys
 
 from qtpy import QtWidgets, QtCore, QtGui  # type: ignore
 
-from pxr import Usd, UsdGeom
+
+class _WideGripStyle(QtWidgets.QProxyStyle):
+    """Widens the interactive resize handle zone on QHeaderView sections."""
+    def pixelMetric(self, metric, option=None, widget=None):
+        if metric == QtWidgets.QStyle.PM_HeaderGripMargin:
+            return 10
+        return super().pixelMetric(metric, option, widget)
+
+from pxr import Usd, UsdGeom, Kind
 from QuiltiX import usd_stage
 from QuiltiX.constants import ROOT
 
@@ -51,26 +59,45 @@ class PrimItemWidget(QtWidgets.QTreeWidgetItem):
         if column == 0:
             if role == QtCore.Qt.DisplayRole:
                 return self.prim.GetName()
-                # return "foo"
+        elif column == 2:
+            if role == QtCore.Qt.DisplayRole:
+                imageable = UsdGeom.Imageable(self.prim)
+                if imageable:
+                    purpose = imageable.ComputePurpose()
+                    return str(purpose) if purpose != UsdGeom.Tokens.default_ else ""
+        elif column == 3:
+            if role == QtCore.Qt.DisplayRole:
+                return self.prim.GetTypeName()
+        elif column == 4:
+            if role == QtCore.Qt.DisplayRole:
+                kind = Usd.ModelAPI(self.prim).GetKind()
+                return kind if kind else ""
         return super().data(column, role)
 
 
 class UsdStageTreeWidget(QtWidgets.QTreeWidget):
     assign_material_to_selected = QtCore.Signal(str)
+    prim_visibility_changed = QtCore.Signal()
 
     def __init__(self, stage=None, parent=None):
         super(UsdStageTreeWidget, self).__init__(parent=parent)
         # TODO: cleanup settings
         __qtreewidgetitem = QtWidgets.QTreeWidgetItem()
-        __qtreewidgetitem.setText(0, "StagePath")
-        __qtreewidgetitem.setTextAlignment(2, QtCore.Qt.AlignLeading | QtCore.Qt.AlignVCenter)
+        __qtreewidgetitem.setText(0, "Name")
+        __qtreewidgetitem.setText(2, "Purpose")
+        __qtreewidgetitem.setText(3, "Type")
+        __qtreewidgetitem.setText(4, "Kind")
         self.setHeaderItem(__qtreewidgetitem)
-        self.setColumnCount(2)
+        self.setColumnCount(5)
         self.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.header().setStretchLastSection(False)
-        self.header().setVisible(False)
-        self.header().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.Stretch
+        self.header().setVisible(True)
+        self.header().setMinimumSectionSize(20)
+        for col in range(5):
+            self.header().setSectionResizeMode(col, QtWidgets.QHeaderView.Interactive)
+        self.header().setStyle(_WideGripStyle())
+        self.header().setStyleSheet(
+            "QHeaderView::section { border-right: 1px solid palette(mid); padding-left: 4px; }"
         )
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.setFrameShadow(QtWidgets.QFrame.Plain)
@@ -79,7 +106,11 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         self.setAlternatingRowColors(True)
         self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.setUniformRowHeights(True)
-        self.setColumnWidth(1, 10)
+        self.setColumnWidth(0, 200)
+        self.setColumnWidth(1, 20)
+        self.setColumnWidth(2, 60)
+        self.setColumnWidth(3, 80)
+        self.setColumnWidth(4, 80)
         self._prim_to_item_map = {}
         self.get_materials_func = None
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -130,17 +161,26 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         return prim.GetFilteredChildren(Usd.PrimIsActive)
 
     def toggle_hierarchy_visibility(self, item, set_visibility_to=None):
+        is_root_call = set_visibility_to is None
         item_vis_button = self.itemWidget(item, 1)
-        if set_visibility_to is None:
+        if is_root_call:
             set_visibility_to = item_vis_button.toggle_visibility()
         else:
             item_vis_button.set_visibility(set_visibility_to)
 
-        # TODO: hide stage prims
+        if isinstance(item, PrimItemWidget):
+            imageable = UsdGeom.Imageable(item.prim)
+            if set_visibility_to:
+                imageable.MakeVisible()
+            else:
+                imageable.MakeInvisible()
 
         for i in range(item.childCount()):
             child_item = item.child(i)
             self.toggle_hierarchy_visibility(child_item, set_visibility_to)
+
+        if is_root_call:
+            self.prim_visibility_changed.emit()
 
     def _show_context_menu(self, pos):
         selected_prims = self.get_selected_prims()

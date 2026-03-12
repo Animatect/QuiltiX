@@ -76,27 +76,60 @@ class MxStageController(QtCore.QObject):
         self._active_material = None
         self._material_mx_names = {}  # manager_name -> actual MaterialX element name
         self._looks_scope = ""        # optional USD path prefix for material reference prims
+        self._geometry_path = None    # currently loaded geometry sublayer path
 
-    def set_stage(self, stage):
-        self.stage = stage
+        # Create a persistent working stage — geometry is a swappable sublayer at the bottom,
+        # so loading new geometry never tears down material layers or assignments.
+        self.stage = Usd.Stage.CreateInMemory()
         self.stage_root = self.stage.GetRootLayer()
-        self.stage.SetEditTarget(Usd.EditTarget(self.stage.GetSessionLayer()))
-
-        self._material_layers = {}
-        self._active_material = None
-        self._material_mx_names = {}
 
         in_memory = os.getenv("QUILTIX_WRITE_TMP_TO_DISK", "0") == "0"
         if in_memory:
-            idf = "_tmp_quiltix_assignments.usd"
-            self._assignments_layer = Sdf.Layer.CreateAnonymous(idf)
+            self._assignments_layer = Sdf.Layer.CreateAnonymous("_tmp_quiltix_assignments.usd")
             self._assignments_idf = self._assignments_layer.identifier
         else:
             self._assignments_idf = os.path.join(os.environ["TEMP"], "_tmp_quiltix_assignments.usd")
             self._assignments_layer = Sdf.Layer.CreateNew(self._assignments_idf)
 
         self.stage_root.subLayerPaths.insert(0, self._assignments_idf)
+        # Use assignments layer as the default edit target so all interactive edits
+        # (visibility, material bindings, etc.) are written there instead of the
+        # session layer, which gets cleared on every material XML refresh.
+        self.stage.SetEditTarget(Usd.EditTarget(self._assignments_layer))
+
+    def set_geometry(self, path):
+        """Swap the geometry sublayer without disturbing materials, assignments, or lights."""
+        if self._geometry_path and self._geometry_path in self.stage_root.subLayerPaths:
+            self.stage_root.subLayerPaths.remove(self._geometry_path)
+        if path:
+            self.stage_root.subLayerPaths.append(path)
+        self._geometry_path = path
+        # Emit signal_stage_changed so the view widget resets camera / BBox
         self.signal_stage_changed.emit(self.stage)
+
+    def clear_session(self):
+        """Reset all material state (layers, cache, assignments) without touching geometry."""
+        for layer in list(self._material_layers.values()):
+            if layer.identifier in self.stage_root.subLayerPaths:
+                self.stage_root.subLayerPaths.remove(layer.identifier)
+        self._material_layers = {}
+        self._active_material = None
+        self._material_mx_names = {}
+        self._assignments_layer.Clear()
+        # Re-insert assignments layer if it was somehow removed
+        if self._assignments_idf not in self.stage_root.subLayerPaths:
+            self.stage_root.subLayerPaths.insert(0, self._assignments_idf)
+
+    def set_stage(self, stage):
+        """Legacy helper: extracts the file path from an opened stage and calls set_geometry."""
+        geo_path = stage.GetRootLayer().realPath
+        if not geo_path:
+            # .abc or anonymous-root stages: check sublayers
+            for sl in stage.GetRootLayer().subLayerPaths:
+                if sl:
+                    geo_path = sl
+                    break
+        self.set_geometry(geo_path or None)
 
     def get_all_geo_prims(self):
         return Utils._GetAllPrimsOfType(self.stage, Tf.Type.Find(UsdGeom.Gprim))
@@ -174,7 +207,6 @@ class MxStageController(QtCore.QObject):
         if material_name not in self._material_layers:
             self.add_material_layer(material_name)
 
-        self.stage.GetSessionLayer().Clear()
         self._material_layers[material_name].ImportFromString(mx_data)
 
         # Record the actual MaterialX element name so update_parameter can find the right prim
@@ -281,3 +313,5 @@ class MxStageController(QtCore.QObject):
             if layer.identifier in self.stage_root.subLayerPaths:
                 self.stage_root.subLayerPaths.remove(layer.identifier)
         self._material_layers.clear()
+        if self._geometry_path and self._geometry_path in self.stage_root.subLayerPaths:
+            self.stage_root.subLayerPaths.remove(self._geometry_path)

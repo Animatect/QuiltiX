@@ -25,7 +25,7 @@ import MaterialX as mx
 plugin_manager.hook.before_pxr_import()
 import pathlib
 
-from pxr import Sdf, Usd, UsdShade
+from pxr import Sdf, Usd, UsdGeom, UsdShade
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore
 from qtpy.QtWidgets import (  # type: ignore
@@ -114,8 +114,7 @@ class QuiltiXWindow(QMainWindow):
 
     def load_shaderball(self):
         stage_file = os.path.join(ROOT, "resources", "geometry", "matx_shaderball_uv.usdc")
-        stage = usd_stage.get_stage_from_file(stage_file)
-        self.stage_ctrl.set_stage(stage)
+        self.stage_ctrl.set_geometry(stage_file)
 
     def init_ui(self):
         self.resize(1600, 900)
@@ -235,10 +234,13 @@ class QuiltiXWindow(QMainWindow):
 
         if self.viewer_enabled:
             self.stage_ctrl.signal_stage_changed.connect(self.stage_view_widget.set_stage)
-            self.stage_ctrl.signal_stage_updated.connect(self.stage_view_widget.view.updateGL)
+            self.stage_ctrl.signal_stage_updated.connect(
+                lambda: self.stage_view_widget.view.updateView(resetCam=False, forceComputeBBox=False)
+            )
 
         self.stage_ctrl.signal_stage_changed.connect(self.stage_tree_widget.set_stage)
         self.stage_ctrl.signal_stage_updated.connect(self.stage_tree_widget.refresh_tree)
+        self.stage_tree_widget.prim_visibility_changed.connect(self.stage_ctrl.signal_stage_updated.emit)
 
         self.material_manager_widget.material_added.connect(self._on_material_added)
         self.material_manager_widget.material_activated.connect(self._on_material_activated)
@@ -382,10 +384,9 @@ class QuiltiXWindow(QMainWindow):
 
         # Sublayers: geometry first so it is at the bottom of the stack
         sublayers = []
-        if self.geometry_selection_path and os.path.exists(self.geometry_selection_path):
-            rel_geo = os.path.relpath(
-                self.geometry_selection_path, save_path.parent
-            ).replace("\\", "/")
+        geo_path = self.stage_ctrl._geometry_path
+        if geo_path and os.path.exists(geo_path):
+            rel_geo = os.path.relpath(geo_path, save_path.parent).replace("\\", "/")
             sublayers.append(rel_geo)
         sublayers.extend(mtlx_rel_paths)
         save_layer.subLayerPaths = sublayers
@@ -438,11 +439,11 @@ class QuiltiXWindow(QMainWindow):
                 geometry_path = abs_sl
                 break
 
-        # Load geometry stage
+        # Reset material state, then load geometry (preserves lights/HDRI)
+        self.stage_ctrl.clear_session()
         if geometry_path and os.path.exists(geometry_path):
             self.geometry_selection_path = geometry_path
-            loaded_stage = usd_stage.get_stage_from_file(geometry_path)
-            self.set_stage(loaded_stage)
+            self.stage_ctrl.set_geometry(geometry_path)
 
         # Restore looks scope
         self.stage_ctrl.set_looks_scope(looks_scope)
@@ -706,6 +707,23 @@ class QuiltiXWindow(QMainWindow):
             self.act_hdri.toggled.connect(self.stage_view_widget.set_hdri_enabled)
             self.act_hdri.toggled.connect(lambda x: self.stage_tree_widget.refresh_tree())
             self.view_menu.addAction(self.act_hdri)
+
+            # Display purpose submenu
+            purpose_menu = self.view_menu.addMenu("Display Purpose")
+            self._purpose_actions = {}
+            for label, token in [
+                ("Default", UsdGeom.Tokens.default_),
+                ("Proxy",   UsdGeom.Tokens.proxy),
+                ("Render",  UsdGeom.Tokens.render),
+                ("Guide",   UsdGeom.Tokens.guide),
+            ]:
+                act = QAction(label, self)
+                act.setCheckable(True)
+                act.setChecked(token == UsdGeom.Tokens.default_)
+                act.toggled.connect(lambda checked, t=token: self._on_purpose_toggled(t, checked))
+                purpose_menu.addAction(act)
+                self._purpose_actions[token] = act
+
             self.view_menu.addSeparator()
 
         self.view_menu.aboutToShow.connect(self.on_view_menu_showing)
@@ -971,10 +989,9 @@ class QuiltiXWindow(QMainWindow):
         if ext in [".hdr", ".hdri", ".exr", ".jpg", ".png"]:
             self.stage_view_widget.set_hdri(filepath)
             self.stage_tree_widget.refresh_tree()
-        elif ext in [".usd", ".usda", ".usdc"]:
-            loaded_stage = usd_stage.get_stage_from_file(filepath)
-            self.set_stage(loaded_stage)
-            # self.fix_geo(self.stage_tree_widget.invisibleRootItem())
+        elif ext in [".usd", ".usda", ".usdc", ".abc"]:
+            self.geometry_selection_path = filepath
+            self.stage_ctrl.set_geometry(filepath)
 
     def load_geometry_triggered(self):
         start_path = self.geometry_selection_path
@@ -993,9 +1010,7 @@ class QuiltiXWindow(QMainWindow):
             return
 
         self.geometry_selection_path = path
-        loaded_stage = usd_stage.get_stage_from_file(path)
-        self.set_stage(loaded_stage)
-        # self.fix_geo(self.stage_tree_widget.invisibleRootItem())
+        self.stage_ctrl.set_geometry(path)
 
     def load_hdri_triggered(self):
         start_path = self.hdri_selection_path
@@ -1029,6 +1044,26 @@ class QuiltiXWindow(QMainWindow):
 
     def on_viewport_toggled(self, checked):
         self.stage_view_dock_widget.setVisible(checked)
+
+    def _on_purpose_toggled(self, token, checked):
+        data_model = self.stage_view_widget.view._dataModel
+        current = set(data_model.includedPurposes)
+        if checked:
+            current.add(token)
+        else:
+            current.discard(token)
+        # Always keep at least one purpose enabled
+        if not current:
+            self._purpose_actions[token].blockSignals(True)
+            self._purpose_actions[token].setChecked(True)
+            self._purpose_actions[token].blockSignals(False)
+            return
+        data_model.includedPurposes = current
+        settings = data_model.viewSettings
+        settings.displayProxy = UsdGeom.Tokens.proxy in current
+        settings.displayRender = UsdGeom.Tokens.render in current
+        settings.displayGuide = UsdGeom.Tokens.guide in current
+        self.stage_view_widget.view.updateView(resetCam=False, forceComputeBBox=False)
 
     def open_mx_homepage_triggered(self):
         url = "https://www.materialx.org"

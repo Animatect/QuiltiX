@@ -187,12 +187,16 @@ class StageViewWidget(QWidget):
             self.set_hdri_enabled(True)
 
     def set_hdri_enabled(self, enabled):
+        hdri_id = self.hdri_stage.GetRootLayer().identifier
+        already_present = hdri_id in self._stage_root.subLayerPaths
         if enabled:
-            self._stage_root.subLayerPaths.append(self.hdri_stage.GetRootLayer().identifier)
-            logger.info("added hdri to stage")
+            if not already_present:
+                self._stage_root.subLayerPaths.append(hdri_id)
+                logger.info("added hdri to stage")
         else:
-            self._stage_root.subLayerPaths.remove(self.hdri_stage.GetRootLayer().identifier)
-            logger.info("removed hdri from stage")
+            if already_present:
+                self._stage_root.subLayerPaths.remove(hdri_id)
+                logger.info("removed hdri from stage")
 
         self.view.updateView(resetCam=False, forceComputeBBox=False)
 
