@@ -22,6 +22,7 @@ class AssetSessionDialog(QtWidgets.QDialog):
         self.setWindowTitle("Asset Session")
         self.setMinimumWidth(640)
         self._session = None
+        self._discovered_payload_layer = ""
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -152,6 +153,8 @@ class AssetSessionDialog(QtWidgets.QDialog):
             self._new_geo_edit.setText(info["geo_layer"])
         if info["mtl_layer"]:
             self._new_mtl_layer_edit.setText(info["mtl_layer"])
+        if info["payload_layer"]:
+            self._discovered_payload_layer = info["payload_layer"]
         if info["material_library"]:
             self._new_lib_edit.setText(info["material_library"])
             if not self._new_mtlx_dir_edit.text():
@@ -288,6 +291,7 @@ class AssetSessionDialog(QtWidgets.QDialog):
             material_paths=mat_paths,
             material_ref_prims=mat_ref_prims,
             mtl_layer_path=mtl_layer if mtl_layer and os.path.exists(mtl_layer) else "",
+            payload_layer_path=self._discovered_payload_layer,
         )
         self.accept()
 

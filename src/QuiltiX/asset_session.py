@@ -27,6 +27,8 @@ class AssetSession:
     material_ref_prims: Dict[str, str] = field(default_factory=dict)
     # path to an existing MTL layer to restore assignments from on load
     mtl_layer_path: str = ""
+    # payload layer (combines geo + mtl) — used as viewport geometry when available
+    payload_layer_path: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +62,7 @@ def discover_from_asset_file(asset_path: str) -> dict:
         "geo_layer": "",
         "mtl_layer": "",
         "material_library": "",
+        "payload_layer": "",
     }
 
     layer = Sdf.Layer.FindOrOpen(asset_path)
@@ -96,6 +99,12 @@ def discover_from_asset_file(asset_path: str) -> dict:
                     result["geo_layer"] = resolved
                 elif "usdlayer_mtl" in resolved:
                     result["mtl_layer"] = resolved
+                elif "usdlayer_payload" in resolved:
+                    result["payload_layer"] = resolved
+                    # Keep traversing into payload to find geo/mtl
+                    child_layer = Sdf.Layer.FindOrOpen(resolved)
+                    if child_layer:
+                        queue.append(child_layer)
                 else:
                     # Keep traversing
                     child_layer = Sdf.Layer.FindOrOpen(resolved)
@@ -206,35 +215,30 @@ def read_material_library(library_path: str) -> Tuple[Dict[str, str], Dict[str, 
 
 def read_mtl_layer_assignments(mtl_layer_path: str) -> Dict[str, str]:
     """
-    Parse a MTL layer USDA.
+    Parse a MTL layer USDA (handles master wrapper → versioned references).
     Returns {absolute_prim_path: mat_name}.
 
-    Finds every prim spec that carries a material:binding relationship and
-    extracts the material name from the bound path's last component.
+    Uses a composed Usd.Stage so that master wrappers that reference
+    versioned layers are resolved correctly.
     """
-    layer = Sdf.Layer.FindOrOpen(mtl_layer_path)
-    if not layer:
+    stage = Usd.Stage.Open(mtl_layer_path)
+    if not stage:
         return {}
 
     assignments: Dict[str, str] = {}
-
-    def visit(path):
-        spec = layer.GetObjectAtPath(path)
-        if not isinstance(spec, Sdf.PrimSpec):
-            return
-        if "material:binding" not in spec.relationships:
-            return
-        rel = spec.relationships["material:binding"]
-        targets = (
-            list(rel.targetPathList.explicitItems)
-            or list(rel.targetPathList.prependedItems)
-            or list(rel.targetPathList.addedItems)
-        )
+    # Use Usd.TraverseInstanceProxies() to also visit 'over' prims
+    # (the MTL layer uses 'over' specs for geometry prim bindings).
+    predicate = Usd.TraverseInstanceProxies(Usd.PrimAllPrimsPredicate)
+    for prim in stage.Traverse(predicate):
+        binding_api = UsdShade.MaterialBindingAPI(prim)
+        binding_rel = binding_api.GetDirectBindingRel()
+        if not binding_rel:
+            continue
+        targets = binding_rel.GetForwardedTargets()
         if targets:
             mat_name = str(targets[0]).split("/")[-1]
-            assignments[str(path)] = mat_name
+            assignments[str(prim.GetPath())] = mat_name
 
-    layer.Traverse(Sdf.Path("/"), visit)
     return assignments
 
 

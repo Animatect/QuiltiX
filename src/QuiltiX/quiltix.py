@@ -398,10 +398,16 @@ class QuiltiXWindow(QMainWindow):
         self.material_manager_widget._list.blockSignals(False)
         self._switching_material = False
 
-        # Load geo layer for viewport preview
-        if session.geo_layer_path and os.path.exists(session.geo_layer_path):
-            self.geometry_selection_path = session.geo_layer_path
-            self.stage_ctrl.set_geometry(session.geo_layer_path)
+        # Load geometry for viewport preview — prefer payload layer (geo + mtl
+        # composed) so existing material bindings are visible immediately.
+        geo_source = ""
+        if session.payload_layer_path and os.path.exists(session.payload_layer_path):
+            geo_source = session.payload_layer_path
+        elif session.geo_layer_path and os.path.exists(session.geo_layer_path):
+            geo_source = session.geo_layer_path
+        if geo_source:
+            self.geometry_selection_path = geo_source
+            self.stage_ctrl.set_geometry(geo_source)
 
         # Populate material manager from library (no XML loaded yet — on-demand)
         if session.material_paths:
