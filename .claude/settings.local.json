@@ -33,7 +33,15 @@
       "Bash(\"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Scripts/python.exe\" -c \"from pxr import Sdf; help\\(Sdf.Layer.CreateAnonymous\\)\")",
       "Bash(find .venv/Lib/site-packages/pxr/bin -name usdview* -o -name MaterialX* 2)",
       "Bash(/dev/null find:*)",
-      "Bash(grep -r \"includedPurposes\\\\|showProxy\\\\|showRender\\\\|showGuides\\\\|ShowProxy\\\\|ShowRender\" C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr/Usdviewq --include=*.py)"
+      "Bash(grep -r \"includedPurposes\\\\|showProxy\\\\|showRender\\\\|showGuides\\\\|ShowProxy\\\\|ShowRender\" C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/.venv/Lib/site-packages/pxr/Usdviewq --include=*.py)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_geo/v0001/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_mtl/v0002/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_mtl/v0001/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Environment/PALACIO_SUR_INT/Export/materialLibrary/v0001/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_mtl/v0004/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Environment/PALACIO_SUR_INT/Export/materialLibrary/master/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/materials/Escuco_Columna_sur/Export/materialX/master/**)",
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/materials/Barro_Maceta_sur/Export/materialX/master/**)"
     ]
   }
 }

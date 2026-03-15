@@ -71,6 +71,7 @@ class QuiltiXWindow(QMainWindow):
         self.stage_ctrl = usd_stage.MxStageController(self)
         self._material_xml_cache = {}   # material_name -> mx xml string
         self._switching_material = False
+        self._asset_session = None      # set when in asset workflow mode
 
         quiltix_logo_path = os.path.join(ROOT, "resources", "icons", "quiltix-logo-x.png")
         quiltix_icon = QtGui.QIcon(QtGui.QPixmap(quiltix_logo_path))
@@ -297,6 +298,13 @@ class QuiltiXWindow(QMainWindow):
         if old:
             self._material_xml_cache[old] = self.qx_node_graph.get_mx_xml_data_from_graph()
 
+        # Asset mode: load .mtlx from disk on first access
+        if self._asset_session and not self._material_xml_cache.get(name):
+            mtlx_path = self._asset_session.material_paths.get(name, "")
+            if mtlx_path and os.path.exists(mtlx_path):
+                with open(mtlx_path, encoding="utf-8") as fh:
+                    self._material_xml_cache[name] = fh.read()
+
         self.stage_ctrl.set_active_material(name)
 
         xml = self._material_xml_cache.get(name)
@@ -304,6 +312,9 @@ class QuiltiXWindow(QMainWindow):
         if xml:
             self.qx_node_graph.load_graph_from_mx_data(xml)
             self._switching_material = False
+            # Refresh the USD stage layer with the loaded XML so the material
+            # resolves in the viewport, and _material_mx_names is populated.
+            self.stage_ctrl.refresh_mx_file(xml, emit=False)
             self.stage_ctrl.signal_stage_updated.emit()
         else:
             self.qx_node_graph.clear_session()
@@ -343,6 +354,196 @@ class QuiltiXWindow(QMainWindow):
             return
         pathlib.Path(path).write_text(xml, encoding="utf-8")
         logger.info(f"Exported material '{name}' to {path}")
+
+    # -------------------------------------------------------------------------
+    # Asset workflow
+    # -------------------------------------------------------------------------
+
+    def _new_asset_session_triggered(self):
+        from QuiltiX.asset_session_dialog import AssetSessionDialog
+        dlg = AssetSessionDialog(self)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        session = dlg.get_session()
+        if session:
+            self._enter_asset_mode(session)
+
+    def _load_asset_session_triggered(self):
+        from QuiltiX.asset_session_dialog import AssetSessionDialog
+        dlg = AssetSessionDialog(self)
+        dlg._tabs.setCurrentIndex(1)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        session = dlg.get_session()
+        if session:
+            self._enter_asset_mode(session)
+
+    def _enter_asset_mode(self, session):
+        """Activate asset mode: load geo, populate material manager from library."""
+        from QuiltiX import asset_session as amod
+
+        self._asset_session = session
+        self._act_save_mat_library.setEnabled(True)
+        self._act_export_mtl.setEnabled(True)
+
+        # Clear existing material state; reset looks scope so asset-mode bindings
+        # always target /MaterialX/Materials/{name} (never a scope alias)
+        self.stage_ctrl.clear_session()
+        self.stage_ctrl.set_looks_scope("")
+        self.material_manager_widget._scope_edit.setText("")
+        self._material_xml_cache = {}
+        self._switching_material = True
+        self.material_manager_widget._list.blockSignals(True)
+        self.material_manager_widget._list.clear()
+        self.material_manager_widget._list.blockSignals(False)
+        self._switching_material = False
+
+        # Load geo layer for viewport preview
+        if session.geo_layer_path and os.path.exists(session.geo_layer_path):
+            self.geometry_selection_path = session.geo_layer_path
+            self.stage_ctrl.set_geometry(session.geo_layer_path)
+
+        # Populate material manager from library (no XML loaded yet — on-demand)
+        if session.material_paths:
+            self._switching_material = True
+            for name in session.material_paths:
+                self.stage_ctrl.add_material_layer(name)
+                self._material_xml_cache[name] = ""
+                self.material_manager_widget.add_material(name, set_active=False)
+            self._switching_material = False
+
+        # Restore assignments from existing MTL layer
+        if session.mtl_layer_path and os.path.exists(session.mtl_layer_path):
+            assignments = amod.read_mtl_layer_assignments(session.mtl_layer_path)
+            if assignments:
+                # Material layers must be populated in the stage before bindings resolve
+                # Load all referenced materials first (minimal: just the layers, not the XML)
+                for mat_name in set(assignments.values()):
+                    if mat_name not in self.stage_ctrl._material_layers:
+                        self.stage_ctrl.add_material_layer(mat_name)
+                    mtlx_path = session.material_paths.get(mat_name, "")
+                    if mtlx_path and os.path.exists(mtlx_path):
+                        with open(mtlx_path, encoding="utf-8") as fh:
+                            xml = fh.read()
+                        self._material_xml_cache[mat_name] = xml
+                        self.stage_ctrl._material_layers[mat_name].ImportFromString(xml)
+                        try:
+                            tmp = mx.createDocument()
+                            mx.readFromXmlString(tmp, xml)
+                            mats = tmp.getMaterials()
+                            if mats:
+                                self.stage_ctrl._material_mx_names[mat_name] = mats[0].getName()
+                        except Exception:
+                            pass
+                self.stage_ctrl.load_assignments_from_mtl_layer(assignments)
+
+        # Activate first material if any
+        all_mats = self.material_manager_widget.get_all_materials()
+        if all_mats:
+            self._on_material_activated(all_mats[0])
+            self.material_manager_widget.set_active_material(all_mats[0])
+
+        self.stage_ctrl.signal_stage_updated.emit()
+        self.stage_tree_widget.refresh_tree()
+        logger.info(f"Asset session started: {session.asset_name}")
+
+    def _save_material_library(self):
+        """Asset mode: write each material to its .mtlx file and update the library USDA."""
+        if not self._asset_session:
+            return
+        from QuiltiX import asset_session as amod
+
+        session = self._asset_session
+        # Snapshot active graph first
+        active = self.stage_ctrl.get_active_material()
+        if active:
+            self._material_xml_cache[active] = self.qx_node_graph.get_mx_xml_data_from_graph()
+
+        os.makedirs(session.mtlx_dir, exist_ok=True)
+
+        for name in self.material_manager_widget.get_all_materials():
+            xml = self._material_xml_cache.get(name, "")
+            if xml:
+                # Material was edited or loaded — write the .mtlx file
+                if name in session.material_paths:
+                    mtlx_path = session.material_paths[name]
+                else:
+                    mtlx_path = os.path.join(session.mtlx_dir, f"{name}.mtlx")
+                    session.material_paths[name] = mtlx_path
+                os.makedirs(os.path.dirname(mtlx_path), exist_ok=True)
+                with open(mtlx_path, "w", encoding="utf-8") as fh:
+                    fh.write(xml)
+                # For NEW materials (not from the library), detect the
+                # internal MX name so the reference prim path matches.
+                # For materials already in the library, keep the original
+                # ref prim path — it was correct when the library was read.
+                if name not in session.material_ref_prims:
+                    try:
+                        doc = mx.createDocument()
+                        mx.readFromXmlString(doc, xml)
+                        mats = doc.getMaterials()
+                        if mats:
+                            session.material_ref_prims[name] = f"/MaterialX/Materials/{mats[0].getName()}"
+                        else:
+                            session.material_ref_prims[name] = f"/MaterialX/Materials/{name}"
+                    except Exception:
+                        session.material_ref_prims[name] = f"/MaterialX/Materials/{name}"
+            else:
+                # Material loaded from library but never opened in editor.
+                # Keep the existing path from the library — do not overwrite .mtlx.
+                if name not in session.material_paths:
+                    mtlx_path = os.path.join(session.mtlx_dir, f"{name}.mtlx")
+                    session.material_paths[name] = mtlx_path
+
+        amod.write_material_library(
+            session.material_library_path,
+            session.material_paths,
+            session.material_ref_prims,
+        )
+        logger.info(f"Material library saved: {session.material_library_path}")
+
+    def _export_mtl_layer_triggered(self):
+        """Asset mode: export the standalone MTL layer USDA."""
+        if not self._asset_session:
+            return
+        from QuiltiX import asset_session as amod
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export MTL Layer",
+            self._asset_session.geo_layer_path or "",
+            "USD Assembly (*.usda);;All Files (*)"
+        )
+        if not path:
+            return
+
+        # Save library first so the library file is up to date
+        self._save_material_library()
+
+        session = self._asset_session
+
+        # Read geo layer metadata for the layer header
+        geo_meta = {"framesPerSecond": 24, "metersPerUnit": 1,
+                    "timeCodesPerSecond": 24, "upAxis": "Y"}
+        if session.geo_layer_path and os.path.exists(session.geo_layer_path):
+            try:
+                geo_stage = Usd.Stage.Open(session.geo_layer_path)
+                geo_meta["framesPerSecond"] = geo_stage.GetFramesPerSecond()
+                geo_meta["timeCodesPerSecond"] = geo_stage.GetTimeCodesPerSecond()
+                geo_meta["metersPerUnit"] = UsdGeom.GetStageMetersPerUnit(geo_stage)
+                geo_meta["upAxis"] = UsdGeom.GetStageUpAxis(geo_stage)
+            except Exception:
+                pass
+
+        assignments = self.stage_ctrl.get_assignments()
+        amod.export_mtl_layer(
+            asset_name=session.asset_name,
+            material_library_path=session.material_library_path,
+            assignments=assignments,
+            output_path=path,
+            geo_meta=geo_meta,
+        )
+        logger.info(f"MTL layer exported: {path}")
+        QMessageBox.information(self, "Export MTL Layer", f"Exported to:\n{path}")
 
     # -------------------------------------------------------------------------
     # Session save / load
@@ -626,6 +827,21 @@ class QuiltiXWindow(QMainWindow):
         load_session = QAction("Load Session...", self)
         load_session.triggered.connect(self.load_session_triggered)
         self.file_menu.addAction(load_session)
+
+        self.file_menu.addSeparator()
+
+        asset_menu = self.file_menu.addMenu("Asset Workflow")
+        asset_menu.addAction("New Asset Session...", self._new_asset_session_triggered)
+        asset_menu.addAction("Load Asset Session...", self._load_asset_session_triggered)
+        asset_menu.addSeparator()
+        self._act_save_mat_library = asset_menu.addAction(
+            "Save Material Library", self._save_material_library
+        )
+        self._act_export_mtl = asset_menu.addAction(
+            "Export MTL Layer...", self._export_mtl_layer_triggered
+        )
+        self._act_save_mat_library.setEnabled(False)
+        self._act_export_mtl.setEnabled(False)
 
         self.file_menu.addSeparator()
 

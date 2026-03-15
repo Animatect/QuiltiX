@@ -308,6 +308,69 @@ class MxStageController(QtCore.QObject):
         self.stage.SetEditTarget(prev_target)
         self.signal_stage_updated.emit()
 
+    def get_assignments(self):
+        """
+        Return {abs_prim_path_str: manager_name} from _assignments_layer.
+        Reads every prim spec that carries a material:binding relationship.
+        The returned material name is the Material Manager name (library prim
+        name), not the internal MaterialX element name — so that MTL layer
+        bindings target the correct library prim.
+        """
+        # Build reverse mapping: mx_element_name -> manager_name
+        mx_to_manager = {v: k for k, v in self._material_mx_names.items()}
+
+        result = {}
+
+        def visit(path):
+            spec = self._assignments_layer.GetObjectAtPath(path)
+            if not isinstance(spec, Sdf.PrimSpec):
+                return
+            if "material:binding" not in spec.relationships:
+                return
+            rel = spec.relationships["material:binding"]
+            targets = (
+                list(rel.targetPathList.explicitItems)
+                or list(rel.targetPathList.prependedItems)
+                or list(rel.targetPathList.addedItems)
+            )
+            if targets:
+                mx_name = str(targets[0]).split("/")[-1]
+                # Map back to manager name if possible
+                manager_name = mx_to_manager.get(mx_name, mx_name)
+                result[str(path)] = manager_name
+
+        self._assignments_layer.Traverse(Sdf.Path("/"), visit)
+        return result
+
+    def load_assignments_from_mtl_layer(self, assignments):
+        """
+        Apply a {abs_prim_path: mat_name} dict to the live stage as bindings.
+        assignments is the output of asset_session.read_mtl_layer_assignments().
+        Material prims are expected at /MaterialX/Materials/{mat_name}.
+        """
+        prev_target = self.stage.GetEditTarget()
+        self.stage.SetEditTarget(Usd.EditTarget(self._assignments_layer))
+
+        for prim_path_str, mat_name in assignments.items():
+            prim = self.stage.GetPrimAtPath(prim_path_str)
+            if not prim.IsValid():
+                logger.warning(f"load_assignments: prim not found: {prim_path_str}")
+                continue
+            # Use the actual MX element name (from .mtlx) rather than the
+            # manager/library prim name — they can differ.
+            mx_name = self._material_mx_names.get(mat_name, mat_name)
+            mat_stage_path = f"/MaterialX/Materials/{mx_name}"
+            material = UsdShade.Material.Get(self.stage, mat_stage_path)
+            if not material.GetPrim().IsValid():
+                logger.warning(f"load_assignments: material not found: {mat_stage_path}")
+                continue
+            prim.ApplyAPI(UsdShade.MaterialBindingAPI)
+            UsdShade.MaterialBindingAPI(prim).Bind(material)
+            logger.info(f"restored binding {mat_name} -> {prim_path_str}")
+
+        self.stage.SetEditTarget(prev_target)
+        self.signal_stage_updated.emit()
+
     def about_to_close(self):
         for layer in self._material_layers.values():
             if layer.identifier in self.stage_root.subLayerPaths:
