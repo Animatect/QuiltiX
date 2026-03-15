@@ -39,6 +39,132 @@ def detect_asset_name(layer_path: str) -> str:
     return (layer.defaultPrim or "") if layer else ""
 
 
+def _resolve_asset_path(layer, asset_path: str) -> str:
+    """Resolve an asset path (possibly with :SDF_FORMAT_ARGS:) relative to *layer*."""
+    path = asset_path.split(":SDF_FORMAT_ARGS:")[0]
+    if not path:
+        return ""
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(os.path.dirname(layer.realPath), path))
+
+
+def discover_from_asset_file(asset_path: str) -> dict:
+    """Follow the USD reference/payload chain from an asset file to find layers.
+
+    Returns dict with keys: asset_name, geo_layer, mtl_layer, material_library.
+    Any value may be "" if not found.
+    """
+    result = {
+        "asset_name": "",
+        "geo_layer": "",
+        "mtl_layer": "",
+        "material_library": "",
+    }
+
+    layer = Sdf.Layer.FindOrOpen(asset_path)
+    if not layer:
+        return result
+
+    result["asset_name"] = layer.defaultPrim or ""
+
+    # Walk through layers following references and payloads (BFS)
+    visited = set()
+    queue = [layer]
+
+    while queue:
+        current = queue.pop(0)
+        idf = current.identifier
+        if idf in visited:
+            continue
+        visited.add(idf)
+
+        for prim_spec in current.rootPrims:
+            # Collect all reference and payload asset paths
+            ref_paths = []
+            for ref in prim_spec.referenceList.prependedItems:
+                ref_paths.append(ref.assetPath)
+            for pl in prim_spec.payloadList.prependedItems:
+                ref_paths.append(pl.assetPath)
+
+            for ap in ref_paths:
+                resolved = _resolve_asset_path(current, ap)
+                if not resolved or not os.path.exists(resolved):
+                    continue
+
+                if "usdlayer_geo" in resolved:
+                    result["geo_layer"] = resolved
+                elif "usdlayer_mtl" in resolved:
+                    result["mtl_layer"] = resolved
+                else:
+                    # Keep traversing
+                    child_layer = Sdf.Layer.FindOrOpen(resolved)
+                    if child_layer:
+                        queue.append(child_layer)
+
+            # Check for material library reference inside a 'mtl' child scope
+            if "mtl" in prim_spec.nameChildren:
+                mtl_spec = prim_spec.nameChildren["mtl"]
+                for ref in mtl_spec.referenceList.prependedItems:
+                    lib_path = _resolve_asset_path(current, ref.assetPath)
+                    if lib_path:
+                        result["material_library"] = lib_path
+
+    # If we found a mtl_layer but not the library, scan the mtl layer for
+    # a 'mtl' scope with a library reference (may be nested under an 'over').
+    if result["mtl_layer"] and not result["material_library"]:
+        result["material_library"] = _find_library_in_layer(result["mtl_layer"])
+
+    return result
+
+
+def _find_library_in_layer(layer_path: str) -> str:
+    """Scan a layer (and any layers it references) for a 'mtl' scope
+    that references a material library.  Follows one level of indirection
+    (master → versioned layer) so that master wrapper files are handled."""
+    visited = set()
+    queue = [layer_path]
+
+    while queue:
+        lp = queue.pop(0)
+        if lp in visited:
+            continue
+        visited.add(lp)
+
+        layer = Sdf.Layer.FindOrOpen(lp)
+        if not layer:
+            continue
+
+        found = ""
+
+        def visit(path):
+            nonlocal found
+            if found:
+                return
+            spec = layer.GetObjectAtPath(path)
+            if not isinstance(spec, Sdf.PrimSpec):
+                return
+            if spec.name == "mtl":
+                for ref in spec.referenceList.prependedItems:
+                    lib_path = _resolve_asset_path(layer, ref.assetPath)
+                    if lib_path:
+                        found = lib_path
+                        return
+
+        layer.Traverse(Sdf.Path("/"), visit)
+        if found:
+            return found
+
+        # Not found — follow references from root prims to check versioned layers
+        for prim_spec in layer.rootPrims:
+            for ref in prim_spec.referenceList.prependedItems:
+                resolved = _resolve_asset_path(layer, ref.assetPath)
+                if resolved and os.path.exists(resolved):
+                    queue.append(resolved)
+
+    return ""
+
+
 def read_material_library(library_path: str) -> Tuple[Dict[str, str], Dict[str, str]]:
     """
     Parse a material library USDA.

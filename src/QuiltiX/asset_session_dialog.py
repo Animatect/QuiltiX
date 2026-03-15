@@ -10,7 +10,9 @@ import os
 
 from qtpy import QtWidgets, QtCore  # type: ignore
 
-from QuiltiX.asset_session import AssetSession, detect_asset_name, read_material_library
+from QuiltiX.asset_session import (
+    AssetSession, detect_asset_name, discover_from_asset_file, read_material_library,
+)
 
 
 class AssetSessionDialog(QtWidgets.QDialog):
@@ -45,6 +47,22 @@ class AssetSessionDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout(tab)
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
+        # --- "From Asset File" quick-fill row ---
+        self._new_asset_file_edit = QtWidgets.QLineEdit()
+        self._new_asset_file_edit.setPlaceholderText(
+            "Pick an ASSET .usda to auto-fill all fields below"
+        )
+        form.addRow(
+            "Asset File:",
+            self._row(self._new_asset_file_edit, "Browse...", self._browse_asset_file),
+        )
+
+        # Separator
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        sep.setFrameShadow(QtWidgets.QFrame.Sunken)
+        form.addRow(sep)
+
         self._new_geo_edit = QtWidgets.QLineEdit()
         self._new_geo_edit.editingFinished.connect(self._auto_name_from_geo)
         form.addRow("Geo Layer:", self._row(self._new_geo_edit, "Browse...", self._browse_new_geo))
@@ -64,6 +82,10 @@ class AssetSessionDialog(QtWidgets.QDialog):
         create_lib.clicked.connect(self._create_new_lib)
         lib_btn_layout.addWidget(create_lib)
         form.addRow("Material Library:", lib_btns)
+
+        self._new_mtl_layer_edit = QtWidgets.QLineEdit()
+        self._new_mtl_layer_edit.setPlaceholderText("(optional) existing MTL layer to restore assignments")
+        form.addRow("MTL Layer:", self._row(self._new_mtl_layer_edit, "Browse...", self._browse_new_mtl))
 
         self._new_mtlx_dir_edit = QtWidgets.QLineEdit()
         form.addRow(".mtlx Directory:", self._row(self._new_mtlx_dir_edit, "Browse...", self._browse_mtlx_dir))
@@ -112,6 +134,35 @@ class AssetSessionDialog(QtWidgets.QDialog):
     # ------------------------------------------------------------------
     # Browse slots — New tab
     # ------------------------------------------------------------------
+
+    def _browse_asset_file(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Asset File", "", "USD Files (*.usd *.usda *.usdc);;All Files (*)"
+        )
+        if not path:
+            return
+        self._new_asset_file_edit.setText(path)
+        self._auto_fill_from_asset(path)
+
+    def _auto_fill_from_asset(self, asset_path):
+        info = discover_from_asset_file(asset_path)
+        if info["asset_name"]:
+            self._new_asset_name.setText(info["asset_name"])
+        if info["geo_layer"]:
+            self._new_geo_edit.setText(info["geo_layer"])
+        if info["mtl_layer"]:
+            self._new_mtl_layer_edit.setText(info["mtl_layer"])
+        if info["material_library"]:
+            self._new_lib_edit.setText(info["material_library"])
+            if not self._new_mtlx_dir_edit.text():
+                self._new_mtlx_dir_edit.setText(os.path.dirname(info["material_library"]))
+
+    def _browse_new_mtl(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select MTL Layer", "", "USD Files (*.usda *.usd *.usdc);;All Files (*)"
+        )
+        if path:
+            self._new_mtl_layer_edit.setText(path)
 
     def _browse_new_geo(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -213,6 +264,7 @@ class AssetSessionDialog(QtWidgets.QDialog):
         lib = self._new_lib_edit.text().strip()
         geo = self._new_geo_edit.text().strip()
         mtlx_dir = self._new_mtlx_dir_edit.text().strip()
+        mtl_layer = self._new_mtl_layer_edit.text().strip()
 
         if not name:
             QtWidgets.QMessageBox.warning(self, "Asset Session", "Asset name is required.")
@@ -235,7 +287,7 @@ class AssetSessionDialog(QtWidgets.QDialog):
             mtlx_dir=mtlx_dir,
             material_paths=mat_paths,
             material_ref_prims=mat_ref_prims,
-            mtl_layer_path="",
+            mtl_layer_path=mtl_layer if mtl_layer and os.path.exists(mtl_layer) else "",
         )
         self.accept()
 
