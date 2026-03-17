@@ -54,10 +54,10 @@ if errorlevel 1 (
     goto :error
 )
 
-:: Verify configparser works (catches broken Python installs)
-"%ROOT%.venv\Scripts\python.exe" -c "import configparser" >nul 2>&1
+REM Verify configparser works - catches broken Python installs like mrv2
+"%ROOT%.venv\Scripts\python.exe" -c "import configparser" 1>nul 2>nul
 if errorlevel 1 (
-    echo  ERROR: Python installation is broken (missing configparser).
+    echo  ERROR: Python installation is broken - missing configparser.
     echo  This usually means a non-standard Python was picked up.
     echo  Try: uv venv --python cpython-3.11 --python-preference only-managed
     goto :error
