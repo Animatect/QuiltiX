@@ -54,7 +54,9 @@
       "Bash(grep -r \"OCIO\\\\|ocio\\\\|color.*config\" c:UsersecovoDocumentsGitHubQuiltXQuiltiXsrc --include=*.py)",
       "Read(//c/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX_win_v0.8.0/**)",
       "Bash(find c:UsersecovoDocumentsGitHubQuiltXQuiltiX -name *.env -o -name .env*)",
-      "Bash(grep -r \"HD_DEFAULT_RENDERER\\\\|OCIO\\\\|color.*config\" c:UsersecovoDocumentsGitHubQuiltXQuiltiX --include=*.bat --include=*.py)"
+      "Bash(grep -r \"HD_DEFAULT_RENDERER\\\\|OCIO\\\\|color.*config\" c:UsersecovoDocumentsGitHubQuiltXQuiltiX --include=*.bat --include=*.py)",
+      "Bash(ls -d \"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX/delegates/Arnold/\"*)",
+      "Bash(ls -d \"C:/Users/ecovo/Documents/GitHub/QuiltX/QuiltiX_win_v0.8.0/delegates/Arnold/\"*)"
     ]
   }
 }

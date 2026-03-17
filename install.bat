@@ -2,7 +2,6 @@
 setlocal enabledelayedexpansion
 
 set "ROOT=%~dp0"
-set "ARNOLD_SRC=%ROOT%..\QuiltiX_win_v0.8.0\delegates\Arnold"
 
 echo.
 echo ============================================
@@ -109,27 +108,43 @@ if exist "%ARNOLD_DST%\Arnold-*" (
     goto :arnold_done
 )
 
-:: Check if Arnold exists in the prebuilt install to copy from
-if exist "%ARNOLD_SRC%" (
-    echo  Found Arnold in prebuilt install. Copying to local delegates...
-    if not exist "%ARNOLD_DST%" mkdir "%ARNOLD_DST%"
-    xcopy "%ARNOLD_SRC%" "%ARNOLD_DST%" /e /i /q /y >nul
-    if errorlevel 1 (
-        echo  WARNING: Failed to copy Arnold delegate. You can still run QuiltiX without Arnold.
-        goto :arnold_skip
-    )
-    echo  Arnold delegate copied.
-    goto :arnold_done
+:: Arnold not found locally — ask the user
+echo  Arnold delegate not found in: %ARNOLD_DST%
+echo.
+echo  If you have Arnold installed elsewhere, enter the path to the Arnold
+echo  delegates folder (the folder containing "Arnold-x.x.x-windows" and "hdArnold").
+echo.
+set "ARNOLD_USER_PATH="
+set /p "ARNOLD_USER_PATH=  Arnold path (or press Enter to skip): "
+
+if "%ARNOLD_USER_PATH%"=="" (
+    goto :arnold_skip
 )
+
+:: Validate the user-provided path
+if not exist "%ARNOLD_USER_PATH%" (
+    echo  Path does not exist: %ARNOLD_USER_PATH%
+    goto :arnold_skip
+)
+
+:: Copy from user-provided path
+echo  Copying Arnold delegate from: %ARNOLD_USER_PATH%
+if not exist "%ARNOLD_DST%" mkdir "%ARNOLD_DST%"
+xcopy "%ARNOLD_USER_PATH%" "%ARNOLD_DST%" /e /i /q /y >nul
+if errorlevel 1 (
+    echo  WARNING: Failed to copy Arnold delegate. You can still run QuiltiX without Arnold.
+    goto :arnold_skip
+)
+echo  Arnold delegate copied.
+goto :arnold_done
 
 :arnold_skip
 echo.
-echo  Arnold render delegate not found.
-echo  To add Arnold support later:
-echo    1. Download Arnold SDK from https://arnoldrenderer.com/download/
-echo    2. Extract to: %ARNOLD_DST%\Arnold-7.x.x-windows\
-echo    3. Download hdArnold from https://github.com/Autodesk/arnold-usd/releases
-echo    4. Place the hdArnold plugin folder in: %ARNOLD_DST%\hdArnold\
+echo  Skipping Arnold setup. QuiltiX will run without Arnold rendering.
+echo  To add Arnold support later, place the SDK in:
+echo    %ARNOLD_DST%\Arnold-7.x.x-windows\
+echo  And the hdArnold plugin in:
+echo    %ARNOLD_DST%\hdArnold\
 echo.
 
 :arnold_done
