@@ -2,6 +2,7 @@
 *.tx
 videos/
 .vscode/
+delegates/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
