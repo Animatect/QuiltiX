@@ -121,10 +121,35 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         self.stage = stage
         self.refresh_tree()
 
+    def _get_expanded_paths(self, item=None):
+        """Collect prim paths of all currently expanded items."""
+        paths = set()
+        if item is None:
+            item = self.invisibleRootItem()
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if isinstance(child, PrimItemWidget) and child.isExpanded():
+                paths.add(str(child.prim.GetPath()))
+                paths.update(self._get_expanded_paths(child))
+        return paths
+
+    def _restore_expanded_paths(self, paths, item=None):
+        """Re-expand items whose prim paths were previously expanded."""
+        if item is None:
+            item = self.invisibleRootItem()
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if isinstance(child, PrimItemWidget) and str(child.prim.GetPath()) in paths:
+                child.setExpanded(True)
+                self._restore_expanded_paths(paths, child)
+
     def refresh_tree(self):
         # mods = QtWidgets.QApplication.keyboardModifiers()
         # if mods != QtCore.Qt.ControlModifier:
         #     return
+
+        # Save expanded state before clearing
+        expanded = self._get_expanded_paths()
 
         self.clear()
         if not self.stage:
@@ -133,7 +158,11 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         stage_root = self.stage.GetPseudoRoot()
         invisible_root_item = self.invisibleRootItem()
         self.populate_item_tree(stage_root, invisible_root_item)
-        self.expandToDepth(0)
+
+        if expanded:
+            self._restore_expanded_paths(expanded)
+        else:
+            self.expandToDepth(0)
 
     def create_item_from_prim(self, prim):
         item = PrimItemWidget(prim)

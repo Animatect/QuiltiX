@@ -409,12 +409,28 @@ class QuiltiXWindow(QMainWindow):
             self.geometry_selection_path = geo_source
             self.stage_ctrl.set_geometry(geo_source)
 
-        # Populate material manager from library (no XML loaded yet — on-demand)
+        # Populate material manager from library and eagerly load .mtlx content
+        # so materials appear in the right-click "Assign Material" menu immediately.
         if session.material_paths:
             self._switching_material = True
             for name in session.material_paths:
                 self.stage_ctrl.add_material_layer(name)
-                self._material_xml_cache[name] = ""
+                mtlx_path = session.material_paths.get(name, "")
+                if mtlx_path and os.path.exists(mtlx_path):
+                    with open(mtlx_path, encoding="utf-8") as fh:
+                        xml = fh.read()
+                    self._material_xml_cache[name] = xml
+                    self.stage_ctrl._material_layers[name].ImportFromString(xml)
+                    try:
+                        tmp = mx.createDocument()
+                        mx.readFromXmlString(tmp, xml)
+                        mats = tmp.getMaterials()
+                        if mats:
+                            self.stage_ctrl._material_mx_names[name] = mats[0].getName()
+                    except Exception:
+                        pass
+                else:
+                    self._material_xml_cache[name] = ""
                 self.material_manager_widget.add_material(name, set_active=False)
             self._switching_material = False
 
@@ -422,25 +438,6 @@ class QuiltiXWindow(QMainWindow):
         if session.mtl_layer_path and os.path.exists(session.mtl_layer_path):
             assignments = amod.read_mtl_layer_assignments(session.mtl_layer_path)
             if assignments:
-                # Material layers must be populated in the stage before bindings resolve
-                # Load all referenced materials first (minimal: just the layers, not the XML)
-                for mat_name in set(assignments.values()):
-                    if mat_name not in self.stage_ctrl._material_layers:
-                        self.stage_ctrl.add_material_layer(mat_name)
-                    mtlx_path = session.material_paths.get(mat_name, "")
-                    if mtlx_path and os.path.exists(mtlx_path):
-                        with open(mtlx_path, encoding="utf-8") as fh:
-                            xml = fh.read()
-                        self._material_xml_cache[mat_name] = xml
-                        self.stage_ctrl._material_layers[mat_name].ImportFromString(xml)
-                        try:
-                            tmp = mx.createDocument()
-                            mx.readFromXmlString(tmp, xml)
-                            mats = tmp.getMaterials()
-                            if mats:
-                                self.stage_ctrl._material_mx_names[mat_name] = mats[0].getName()
-                        except Exception:
-                            pass
                 self.stage_ctrl.load_assignments_from_mtl_layer(assignments)
 
         # Activate first material if any
