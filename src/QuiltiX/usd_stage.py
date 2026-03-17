@@ -228,25 +228,39 @@ class MxStageController(QtCore.QObject):
         if not self._active_material:
             return
 
+        # Try the fast path: direct USD attribute set on the material layer.
+        mat_layer = self._material_layers.get(self._active_material)
+        if self._try_fast_parameter_update(qx_node, property_name, property_value, mat_layer):
+            self.signal_stage_updated.emit()
+            return
+
+        # Fast path failed — fall back to a full XML reimport of the material
+        # layer.  This is the same path taken when switching materials and
+        # guarantees the MX file-format plugin re-translates the graph.
+        if self.editor:
+            xml = self.editor.qx_node_graph.get_mx_xml_data_from_graph()
+            if xml:
+                self.refresh_mx_file(xml)
+
+    def _try_fast_parameter_update(self, qx_node, property_name, property_value, mat_layer):
+        """Attempt to set a single USD attribute directly.  Returns True on success."""
         if qx_node.type_ == "Other.QxGroupNode":
             ng_name = qx_node.name()
             sub_graph = qx_node.get_sub_graph()
             if not sub_graph:
-                return
+                return False
 
             in_port_node = sub_graph.get_input_port_nodes()[0]
             out_port = in_port_node.get_output(property_name)
             cports = out_port.connected_ports()
             if not cports:
-                return
+                return False
 
             mx_stage_path = f"/MaterialX/NodeGraphs/{ng_name}/" + cports[0].node().name()
             property_name = cports[0].name()
-            prim = self.stage.GetPrimAtPath(mx_stage_path)
         elif qx_node.current_mx_def.getNodeGroup() in ["material", "pbr", "shader"]:
             mx_elem_name = self._material_mx_names.get(self._active_material, self._active_material)
             mx_stage_path = f"/MaterialX/Materials/{mx_elem_name}"
-            prim = self.stage.GetPrimAtPath(mx_stage_path)
         else:
             if qx_node.graph.is_root:
                 ng_name = "NG_main"
@@ -254,17 +268,17 @@ class MxStageController(QtCore.QObject):
                 ng_name = qx_node.graph.node.name()
 
             mx_stage_path = f"/MaterialX/NodeGraphs/{ng_name}/" + qx_node.NODE_NAME
-            prim = self.stage.GetPrimAtPath(mx_stage_path)
 
+        prim = self.stage.GetPrimAtPath(mx_stage_path)
         if not prim.IsValid():
-            logger.warning("invalid prim at path: " + mx_stage_path)
-            return
+            return False
 
         usdinput = UsdShade.Shader(prim).GetInput(property_name)
+        if not usdinput:
+            return False
         attr = usdinput.GetAttr()
         if not attr.IsValid():
-            logger.warning(f"Invalid attribute {property_name} on prim {mx_stage_path}")
-            return
+            return False
 
         if type(property_value) in [list, tuple]:
             if len(property_value) == 4:
@@ -275,10 +289,17 @@ class MxStageController(QtCore.QObject):
             if len(property_value) == 3:
                 property_value = Gf.Vec3f(property_value)
             elif len(property_value) == 2:
-                property_value = Gf.Vec2f(property_value)                
+                property_value = Gf.Vec2f(property_value)
 
-        usdinput.GetAttr().Set(property_value)
-        self.signal_stage_updated.emit()
+        # Write to the material layer so the edit lives alongside the MX content
+        prev_target = self.stage.GetEditTarget()
+        if mat_layer:
+            self.stage.SetEditTarget(Usd.EditTarget(mat_layer))
+        try:
+            attr.Set(property_value)
+        finally:
+            self.stage.SetEditTarget(prev_target)
+        return True
 
     def apply_material_to_prims(self, material_name, prims):
         mx_material_stage_path = "/".join(("", "MaterialX", "Materials", material_name))
