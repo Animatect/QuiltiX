@@ -46,7 +46,10 @@
       "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/ASSET/v0001/**)",
       "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_payload/master/**)",
       "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_payload/v0001/**)",
-      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_mtl/master/**)"
+      "Read(//r/XICO_Y_NOSOTRAS/03_Production/Assets/Props/PalacioSurInt/ASSETS/Columna_sur_1/Export/usdlayer_mtl/master/**)",
+      "Bash(find c:UsersecovoDocumentsGitHubQuiltXQuiltiX -name *.py -type f -exec grep -l \"pipeline\\\\|dcc\\\\|integration\\\\|DCC\\\\|Pipeline\\\\|environment\" {})",
+      "Bash(grep -r QUILTIX_PLUGIN c:UsersecovoDocumentsGitHubQuiltXQuiltiX --include=*.md --include=*.txt --include=*.py)",
+      "Read(//c/Program/ Files/Prism2/**)"
     ]
   }
 }

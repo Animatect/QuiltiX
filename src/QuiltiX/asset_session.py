@@ -213,20 +213,56 @@ def read_material_library(library_path: str) -> Tuple[Dict[str, str], Dict[str, 
     return mat_paths, mat_ref_prims
 
 
+def _resolve_versioned_layer(layer_path: str) -> str:
+    """Follow master wrapper references to find the actual versioned layer.
+
+    A master wrapper typically has a single root prim with a reference to the
+    versioned layer, e.g.  ``def "configure_mtl_layer" (references = @../v0002/...@)``.
+    If the given layer looks like a wrapper (single root prim whose only content
+    is a reference), return the resolved reference path.  Otherwise return the
+    original path.
+    """
+    layer = Sdf.Layer.FindOrOpen(layer_path)
+    if not layer:
+        return layer_path
+
+    root_prims = list(layer.rootPrims)
+    if len(root_prims) != 1:
+        return layer_path
+
+    spec = root_prims[0]
+    refs = spec.referenceList.prependedItems or spec.referenceList.explicitItems
+    if not refs:
+        return layer_path
+
+    ref = refs[0]
+    if not ref.assetPath:
+        return layer_path
+
+    resolved = _resolve_asset_path(layer, ref.assetPath)
+    if resolved and os.path.isfile(resolved):
+        return resolved
+
+    return layer_path
+
+
 def read_mtl_layer_assignments(mtl_layer_path: str) -> Dict[str, str]:
     """
     Parse a MTL layer USDA (handles master wrapper → versioned references).
     Returns {absolute_prim_path: mat_name}.
 
-    Uses a composed Usd.Stage so that master wrappers that reference
-    versioned layers are resolved correctly.
+    Resolves master wrappers to the actual versioned layer first, then uses
+    a composed Usd.Stage so nested references are followed correctly.
     """
-    stage = Usd.Stage.Open(mtl_layer_path)
+    # Resolve past master wrapper so prim paths match the real asset hierarchy
+    resolved_path = _resolve_versioned_layer(mtl_layer_path)
+
+    stage = Usd.Stage.Open(resolved_path)
     if not stage:
         return {}
 
     assignments: Dict[str, str] = {}
-    # Use Usd.TraverseInstanceProxies() to also visit 'over' prims
+    # Use Usd.PrimAllPrimsPredicate to also visit 'over' prims
     # (the MTL layer uses 'over' specs for geometry prim bindings).
     predicate = Usd.TraverseInstanceProxies(Usd.PrimAllPrimsPredicate)
     for prim in stage.Traverse(predicate):

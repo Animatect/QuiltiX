@@ -517,10 +517,9 @@ class QuiltiXWindow(QMainWindow):
         logger.info(f"Material library saved: {session.material_library_path}")
 
     def _export_mtl_layer_triggered(self):
-        """Asset mode: export the standalone MTL layer USDA."""
+        """Asset mode: export the standalone MTL layer USDA (with file dialog)."""
         if not self._asset_session:
             return
-        from QuiltiX import asset_session as amod
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Export MTL Layer",
@@ -529,6 +528,15 @@ class QuiltiXWindow(QMainWindow):
         )
         if not path:
             return
+
+        self._export_mtl_layer_to_path(path)
+        QMessageBox.information(self, "Export MTL Layer", f"Exported to:\n{path}")
+
+    def _export_mtl_layer_to_path(self, path):
+        """Export the current MTL layer to *path*.  Reusable by plugins."""
+        if not self._asset_session:
+            raise RuntimeError("No active asset session")
+        from QuiltiX import asset_session as amod
 
         # Save library first so the library file is up to date
         self._save_material_library()
@@ -557,7 +565,6 @@ class QuiltiXWindow(QMainWindow):
             geo_meta=geo_meta,
         )
         logger.info(f"MTL layer exported: {path}")
-        QMessageBox.information(self, "Export MTL Layer", f"Exported to:\n{path}")
 
     # -------------------------------------------------------------------------
     # Session save / load
