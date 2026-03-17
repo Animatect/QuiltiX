@@ -78,9 +78,11 @@ class PrimItemWidget(QtWidgets.QTreeWidgetItem):
 class UsdStageTreeWidget(QtWidgets.QTreeWidget):
     assign_material_to_selected = QtCore.Signal(str)
     prim_visibility_changed = QtCore.Signal()
+    prim_selected = QtCore.Signal(str)  # emits prim path of first selected item
 
     def __init__(self, stage=None, parent=None):
         super(UsdStageTreeWidget, self).__init__(parent=parent)
+        self.itemSelectionChanged.connect(self._on_selection_changed)
         # TODO: cleanup settings
         __qtreewidgetitem = QtWidgets.QTreeWidgetItem()
         __qtreewidgetitem.setText(0, "Name")
@@ -143,16 +145,31 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
                 child.setExpanded(True)
                 self._restore_expanded_paths(paths, child)
 
+    def _get_selected_paths(self):
+        """Collect prim paths of all currently selected items."""
+        return {str(item.prim.GetPath()) for item in self.selectedItems()
+                if isinstance(item, PrimItemWidget)}
+
+    def _restore_selected_paths(self, paths, item=None):
+        """Re-select items whose prim paths were previously selected."""
+        if item is None:
+            item = self.invisibleRootItem()
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if isinstance(child, PrimItemWidget):
+                if str(child.prim.GetPath()) in paths:
+                    child.setSelected(True)
+                self._restore_selected_paths(paths, child)
+
     def refresh_tree(self):
-        # mods = QtWidgets.QApplication.keyboardModifiers()
-        # if mods != QtCore.Qt.ControlModifier:
-        #     return
-
-        # Save expanded state before clearing
+        # Save expanded and selected state before clearing
         expanded = self._get_expanded_paths()
+        selected = self._get_selected_paths()
 
+        self.blockSignals(True)
         self.clear()
         if not self.stage:
+            self.blockSignals(False)
             return
 
         stage_root = self.stage.GetPseudoRoot()
@@ -163,6 +180,10 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
             self._restore_expanded_paths(expanded)
         else:
             self.expandToDepth(0)
+
+        if selected:
+            self._restore_selected_paths(selected)
+        self.blockSignals(False)
 
     def create_item_from_prim(self, prim):
         item = PrimItemWidget(prim)
@@ -227,6 +248,13 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
             action.triggered.connect(lambda checked=False, name=mat_name: self.assign_material_to_selected.emit(name))
 
         menu.exec_(self.viewport().mapToGlobal(pos))
+
+    def _on_selection_changed(self):
+        items = self.selectedItems()
+        if items and isinstance(items[0], PrimItemWidget):
+            self.prim_selected.emit(str(items[0].prim.GetPath()))
+        else:
+            self.prim_selected.emit("")
 
     def get_selected_prims(self):
         items = self.selectedItems()

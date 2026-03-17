@@ -50,6 +50,7 @@ from qtpy.QtWidgets import (  # type: ignore
 )
 
 from QuiltiX import material_manager, mx_node, qx_node, usd_render_settings, usd_stage, usd_stage_tree, usd_stage_view
+from QuiltiX.transform_panel import TransformPanel
 from QuiltiX.constants import ROOT
 from QuiltiX.qx_node_property import PropertiesBinWidget
 from QuiltiX.qx_nodegraph import QxNodeGraph
@@ -224,6 +225,16 @@ class QuiltiXWindow(QMainWindow):
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.material_manager_dock_widget)
         self.splitDockWidget(self.properties_dock_widget, self.material_manager_dock_widget, QtCore.Qt.Vertical)
         # endregion Material Manager
+
+        # region Transform Panel
+        self.transform_panel = TransformPanel(self.stage_ctrl)
+        self.stage_tree_widget.prim_selected.connect(self.transform_panel.set_prim_path)
+        self.transform_panel_dock_widget = QDockWidget()
+        self.transform_panel_dock_widget.setWindowTitle("Transform")
+        self.transform_panel_dock_widget.setWidget(self.transform_panel)
+        self.transform_panel_dock_widget.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+        self.splitDockWidget(self.material_manager_dock_widget, self.transform_panel_dock_widget, QtCore.Qt.Vertical)
+        # endregion Transform Panel
 
         # region Events
         self.qx_node_graph.node_graph_changed.connect(self.on_node_graph_changed)
