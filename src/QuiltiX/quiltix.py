@@ -242,6 +242,7 @@ class QuiltiXWindow(QMainWindow):
         # TODO: mx_parameter_changed should maybe emit this? This would help decouple usd_stage from qx_node
         # QxNode.get_mx_input_name_from_property_name(qx_node, property_name)
         self.qx_node_graph.mx_parameter_changed.connect(self.stage_ctrl.update_parameter)
+        self.qx_node_graph.mx_parameter_changed.connect(self._on_parameter_changed)
         self.qx_node_graph.mx_file_loaded.connect(self.on_mx_file_loaded)
 
         if self.viewer_enabled:
@@ -296,6 +297,18 @@ class QuiltiXWindow(QMainWindow):
     def on_node_graph_changed(self, nodegraph):
         if self.act_apply_mat.isChecked():
             self.stage_ctrl.apply_first_material_to_all_prims()
+        self._mark_active_material_dirty()
+
+    def _on_parameter_changed(self, qx_node, property_name, property_value):
+        """A node parameter was changed — mark the active material for saving."""
+        self._mark_active_material_dirty()
+
+    def _mark_active_material_dirty(self):
+        """Toggle the save checkbox for the active material if in asset mode."""
+        if not self._switching_material and self._asset_session:
+            active = self.material_manager_widget.get_active_material()
+            if active:
+                self.material_manager_widget.set_save_toggle(active, True)
 
     def _on_material_added(self, name):
         """Called when the user clicks '+ New' — create the USD layer before activation fires."""
@@ -314,7 +327,10 @@ class QuiltiXWindow(QMainWindow):
             mtlx_path = self._asset_session.material_paths.get(name, "")
             if mtlx_path and os.path.exists(mtlx_path):
                 with open(mtlx_path, encoding="utf-8") as fh:
-                    self._material_xml_cache[name] = fh.read()
+                    xml_data = fh.read()
+                # Rename USD_Default surfacematerial to the material name
+                xml_data = self._rename_default_shader(xml_data, name)
+                self._material_xml_cache[name] = xml_data
 
         self.stage_ctrl.set_active_material(name)
 
@@ -331,6 +347,25 @@ class QuiltiXWindow(QMainWindow):
             self.qx_node_graph.clear_session()
             self._switching_material = False
             self._create_default_material_nodes(name)
+
+    @staticmethod
+    def _rename_default_shader(xml_data, new_name):
+        """Rename the surfacematerial node from USD_Default to *new_name*.
+
+        This is used when loading a .mtlx file whose surfacematerial is named
+        ``USD_Default`` — we rename it to match the material/library prim name
+        so the USD stage resolves at ``/MaterialX/Materials/{new_name}``.
+        """
+        try:
+            doc = mx.createDocument()
+            mx.readFromXmlString(doc, xml_data)
+            for mat in doc.getMaterials():
+                if mat.getName() == "USD_Default":
+                    mat.setName(new_name)
+            xml_data = mx.writeToXmlString(doc)
+        except Exception:
+            pass
+        return xml_data
 
     def _create_default_material_nodes(self, material_name):
         """Populate a new empty graph with a surfacematerial + standard_surface."""
@@ -430,6 +465,8 @@ class QuiltiXWindow(QMainWindow):
                 if mtlx_path and os.path.exists(mtlx_path):
                     with open(mtlx_path, encoding="utf-8") as fh:
                         xml = fh.read()
+                    # Rename USD_Default → material name so stage resolves correctly
+                    xml = self._rename_default_shader(xml, name)
                     self._material_xml_cache[name] = xml
                     self.stage_ctrl._material_layers[name].ImportFromString(xml)
                     try:

@@ -314,7 +314,11 @@ def write_material_library(
     ]
 
     for mat_name, mtlx_path in sorted(mat_paths.items()):
-        rel = os.path.relpath(mtlx_path, lib_dir).replace("\\", "/")
+        try:
+            rel = os.path.relpath(mtlx_path, lib_dir).replace("\\", "/")
+        except ValueError:
+            # Cross-drive (e.g. R: vs C:) — use absolute path
+            rel = mtlx_path.replace("\\", "/")
         ref_prim = mat_ref_prims.get(mat_name, f"/MaterialX/Materials/{mat_name}")
         lines += [
             f'    def "{mat_name}" (',

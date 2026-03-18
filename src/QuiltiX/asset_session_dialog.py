@@ -157,8 +157,6 @@ class AssetSessionDialog(QtWidgets.QDialog):
             self._discovered_payload_layer = info["payload_layer"]
         if info["material_library"]:
             self._new_lib_edit.setText(info["material_library"])
-            if not self._new_mtlx_dir_edit.text():
-                self._new_mtlx_dir_edit.setText(os.path.dirname(info["material_library"]))
 
     def _browse_new_mtl(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(

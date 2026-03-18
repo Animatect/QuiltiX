@@ -30,6 +30,10 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         scope_layout.addWidget(self._scope_edit)
         layout.addLayout(scope_layout)
 
+        self._toggle_all_cb = QtWidgets.QCheckBox("Toggle all for save")
+        self._toggle_all_cb.stateChanged.connect(self._on_toggle_all)
+        layout.addWidget(self._toggle_all_cb)
+
         self._list = QtWidgets.QListWidget()
         self._list.currentItemChanged.connect(self._on_selection_changed)
         self._list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -56,6 +60,11 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         action = menu.exec_(self._list.viewport().mapToGlobal(pos))
         if action == export_action:
             self.material_export_requested.emit(item.text())
+
+    def _on_toggle_all(self, state):
+        check = QtCore.Qt.Checked if state == QtCore.Qt.Checked else QtCore.Qt.Unchecked
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(check)
 
     def _on_scope_changed(self):
         self.looks_scope_changed.emit(self._scope_edit.text().strip())
@@ -99,6 +108,8 @@ class MaterialManagerWidget(QtWidgets.QWidget):
                 self._list.setCurrentItem(matches[0])
             return
         item = QtWidgets.QListWidgetItem(name)
+        item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+        item.setCheckState(QtCore.Qt.Unchecked)
         self._list.addItem(item)
         if set_active:
             self._list.setCurrentItem(item)
@@ -117,3 +128,27 @@ class MaterialManagerWidget(QtWidgets.QWidget):
 
     def get_all_materials(self):
         return [self._list.item(i).text() for i in range(self._list.count())]
+
+    # -- Save toggle API --
+
+    def set_save_toggle(self, name, checked):
+        """Set the save checkbox for a material by name."""
+        matches = self._list.findItems(name, QtCore.Qt.MatchExactly)
+        if matches:
+            matches[0].setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+
+    def get_save_toggle(self, name):
+        """Return True if the save checkbox is checked for the given material."""
+        matches = self._list.findItems(name, QtCore.Qt.MatchExactly)
+        if matches:
+            return matches[0].checkState() == QtCore.Qt.Checked
+        return False
+
+    def get_toggled_materials(self):
+        """Return list of material names that have the save checkbox checked."""
+        result = []
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                result.append(item.text())
+        return result

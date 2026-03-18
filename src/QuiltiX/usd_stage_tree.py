@@ -11,7 +11,7 @@ class _WideGripStyle(QtWidgets.QProxyStyle):
             return 10
         return super().pixelMetric(metric, option, widget)
 
-from pxr import Usd, UsdGeom, Kind
+from pxr import Usd, UsdGeom, UsdShade, Kind
 from QuiltiX import usd_stage
 from QuiltiX.constants import ROOT
 
@@ -234,18 +234,34 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
 
     def _show_context_menu(self, pos):
         selected_prims = self.get_selected_prims()
-        if not selected_prims or self.get_materials_func is None:
-            return
-
-        materials = self.get_materials_func()
-        if not materials:
+        if not selected_prims:
             return
 
         menu = QtWidgets.QMenu(self)
-        assign_menu = menu.addMenu("Assign Material")
-        for mat_name in materials:
-            action = assign_menu.addAction(mat_name)
-            action.triggered.connect(lambda checked=False, name=mat_name: self.assign_material_to_selected.emit(name))
+
+        # Show current binding for the first selected prim
+        prim = selected_prims[0]
+        binding_api = UsdShade.MaterialBindingAPI(prim)
+        bound_mat, _ = binding_api.ComputeBoundMaterial()
+        if bound_mat:
+            mat_path = str(bound_mat.GetPath())
+            mat_label = mat_path.split("/")[-1]
+            info_action = menu.addAction(f"Bound: {mat_label}")
+            info_action.setEnabled(False)
+            info_action.setToolTip(mat_path)
+            menu.addSeparator()
+
+        # Assign material submenu
+        if self.get_materials_func is not None:
+            materials = self.get_materials_func()
+            if materials:
+                assign_menu = menu.addMenu("Assign Material")
+                for mat_name in materials:
+                    action = assign_menu.addAction(mat_name)
+                    action.triggered.connect(
+                        lambda checked=False, name=mat_name:
+                            self.assign_material_to_selected.emit(name)
+                    )
 
         menu.exec_(self.viewport().mapToGlobal(pos))
 
