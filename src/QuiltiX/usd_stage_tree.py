@@ -77,6 +77,7 @@ class PrimItemWidget(QtWidgets.QTreeWidgetItem):
 
 class UsdStageTreeWidget(QtWidgets.QTreeWidget):
     assign_material_to_selected = QtCore.Signal(str)
+    select_bound_material = QtCore.Signal(str)  # emits material name to select in manager
     prim_visibility_changed = QtCore.Signal()
     prim_selected = QtCore.Signal(str)  # emits prim path of first selected item
 
@@ -246,9 +247,12 @@ class UsdStageTreeWidget(QtWidgets.QTreeWidget):
         if bound_mat:
             mat_path = str(bound_mat.GetPath())
             mat_label = mat_path.split("/")[-1]
-            info_action = menu.addAction(f"Bound: {mat_label}")
-            info_action.setEnabled(False)
+            info_action = menu.addAction(f"Select bound: {mat_label}")
             info_action.setToolTip(mat_path)
+            info_action.triggered.connect(
+                lambda checked=False, name=mat_label:
+                    self.select_bound_material.emit(name)
+            )
             menu.addSeparator()
 
         # Assign material submenu

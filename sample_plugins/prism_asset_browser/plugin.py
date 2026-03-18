@@ -209,7 +209,11 @@ class PrismAssetIntegration:
         bridge = _get_bridge()
 
         # Save toggled materials first so the library references are up to date
-        saved_mats, lib_updated, mat_errors = self._save_toggled_materials()
+        try:
+            saved_mats, lib_updated, mat_errors = self._save_toggled_materials()
+        except Exception:
+            logger.exception("Failed during material save step")
+            saved_mats, lib_updated, mat_errors = [], False, []
 
         # Determine product name from the MTL layer convention
         product_name = "usdlayer_mtl"
@@ -224,7 +228,7 @@ class PrismAssetIntegration:
             )
             return
 
-        # Use the existing export logic
+        # Export the MTL layer version
         try:
             self.editor._export_mtl_layer_to_path(next_path)
             version_dir = os.path.dirname(next_path)
@@ -237,54 +241,55 @@ class PrismAssetIntegration:
             )
             return
 
-        # --- Post-export options dialog ---
+        # --- Post-export dialog: prompt for master + library ---
         from qtpy.QtWidgets import QDialog, QVBoxLayout, QCheckBox, QLabel, QDialogButtonBox
 
         dlg = QDialog(self.editor)
-        dlg.setWindowTitle("Export MTL — Options")
+        dlg.setWindowTitle("MTL Layer Saved")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(400)
         lay = QVBoxLayout(dlg)
 
-        lay.addWidget(QLabel(f"MTL layer exported to:\n{next_path}"))
-
+        # Summary of what was saved
+        summary_lines = [f"MTL layer saved to:\n{next_path}"]
         if saved_mats:
-            lay.addWidget(QLabel(
+            summary_lines.append(
                 "\nMaterials saved:\n" + "\n".join(f"  • {s}" for s in saved_mats)
-            ))
+            )
+        if lib_updated:
+            summary_lines.append(f"\nLibrary updated: {session.material_library_path}")
         if mat_errors:
-            lay.addWidget(QLabel(
+            summary_lines.append(
                 "\nErrors:\n" + "\n".join(f"  • {e}" for e in mat_errors)
-            ))
+            )
+        lay.addWidget(QLabel("\n".join(summary_lines)))
 
         cb_master_mtl = QCheckBox("Set MTL layer as master")
         cb_master_mtl.setChecked(True)
         lay.addWidget(cb_master_mtl)
 
         cb_save_lib = QCheckBox("Save new version of material library")
-        cb_save_lib.setChecked(lib_updated)  # pre-checked if materials were saved
+        cb_save_lib.setChecked(lib_updated)
         lay.addWidget(cb_save_lib)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
         buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
         lay.addWidget(buttons)
 
-        if dlg.exec_() != QDialog.Accepted:
-            return
+        dlg.exec_()
 
         if cb_master_mtl.isChecked():
             try:
                 bridge.set_master_version(version_dir)
-                logger.info("Master version updated from: %s", version_dir)
+                logger.info("Master version set: %s", version_dir)
             except Exception:
-                logger.exception("Failed to update master version")
+                logger.exception("Failed to set master version")
                 QMessageBox.warning(
                     self.editor, "Prism",
-                    "Exported successfully but failed to update master version.",
+                    "Failed to set MTL layer as master.",
                 )
 
-        extra_lib_saved = False
         if cb_save_lib.isChecked() and not lib_updated:
-            # Library wasn't already saved by _save_toggled_materials — save now
             materials_folder_rel = bridge.get_materials_folder_rel(self._last_entity)
             core = bridge.get_core()
             if session.mtlx_dir and os.path.isabs(session.mtlx_dir):
@@ -293,26 +298,7 @@ class PrismAssetIntegration:
                 )
                 if rel:
                     materials_folder_rel = rel
-            extra_lib_saved = self._save_library_to_prism(
-                bridge, session, materials_folder_rel,
-            )
-
-        # Final summary
-        summary = [f"MTL layer: {next_path}"]
-        if cb_master_mtl.isChecked():
-            summary.append("  → set as master")
-        if saved_mats:
-            summary.append("\nMaterials saved:")
-            for s in saved_mats:
-                summary.append(f"  • {s}")
-        if lib_updated or extra_lib_saved:
-            summary.append(f"\nLibrary updated: {session.material_library_path}")
-        if mat_errors:
-            summary.append("\nErrors:")
-            for e in mat_errors:
-                summary.append(f"  • {e}")
-
-        QMessageBox.information(self.editor, "Export Summary", "\n".join(summary))
+            self._save_library_to_prism(bridge, session, materials_folder_rel)
 
     # ------------------------------------------------------------------
     # Save Materials to Prism

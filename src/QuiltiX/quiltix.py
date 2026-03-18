@@ -177,6 +177,7 @@ class QuiltiXWindow(QMainWindow):
         self.stage_tree_widget = self.get_stage_tree_widget()
         self.stage_tree_widget.get_materials_func = self._get_material_node_names
         self.stage_tree_widget.assign_material_to_selected.connect(self._on_assign_material_to_selected)
+        self.stage_tree_widget.select_bound_material.connect(self._on_select_bound_material)
         self.stage_tree_dock_widget = QDockWidget()
         self.stage_tree_dock_widget.setWindowTitle("Scenegraph")
         self.stage_tree_dock_widget.setWidget(self.stage_tree_widget)
@@ -821,6 +822,15 @@ class QuiltiXWindow(QMainWindow):
         prims = self.stage_tree_widget.get_selected_prims()
         if prims:
             self.stage_ctrl.apply_material_to_prims(material_name, prims)
+
+    def _on_select_bound_material(self, material_name):
+        """Select the bound material in the material manager and switch to it."""
+        # The bound name might be the MX internal name — reverse-map to manager name
+        reverse = {v: k for k, v in self.stage_ctrl._material_mx_names.items()}
+        manager_name = reverse.get(material_name, material_name)
+        all_mats = self.material_manager_widget.get_all_materials()
+        if manager_name in all_mats:
+            self.material_manager_widget._list.setCurrentRow(all_mats.index(manager_name))
 
     def expand_selected_nodegraph(self):
         action = self.expand_cmd.qaction

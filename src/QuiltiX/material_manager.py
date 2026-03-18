@@ -31,7 +31,7 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         layout.addLayout(scope_layout)
 
         self._toggle_all_cb = QtWidgets.QCheckBox("Toggle all for save")
-        self._toggle_all_cb.stateChanged.connect(self._on_toggle_all)
+        self._toggle_all_cb.clicked.connect(self._on_toggle_all)
         layout.addWidget(self._toggle_all_cb)
 
         self._list = QtWidgets.QListWidget()
@@ -61,10 +61,11 @@ class MaterialManagerWidget(QtWidgets.QWidget):
         if action == export_action:
             self.material_export_requested.emit(item.text())
 
-    def _on_toggle_all(self, state):
-        check = QtCore.Qt.Checked if state == QtCore.Qt.Checked else QtCore.Qt.Unchecked
+    def _on_toggle_all(self):
+        checked = self._toggle_all_cb.isChecked()
+        state = QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(check)
+            self._list.item(i).setCheckState(state)
 
     def _on_scope_changed(self):
         self.looks_scope_changed.emit(self._scope_edit.text().strip())
